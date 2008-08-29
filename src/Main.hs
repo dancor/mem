@@ -214,7 +214,7 @@ main = do
       where header = "Usage:"
   -- currently must specify exactly one mem file
   let
-    [qnaFN, comm] = if length qnaFNs == 1 then qnaFNs ++ [""] else qnaFNs
+    [qnaFN, comm] = if length qnaFNs == 1 then qnaFNs ++ ["false"] else qnaFNs
   let (answerer, askMethod, qSelect, maxLineMby) = foldr procOpt ("", LastCorrectDeltaTimes 2, QSInitial, Nothing) opts
   qnaF <- openFile qnaFN ReadMode
   c <- hGetContents qnaF
