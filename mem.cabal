@@ -1,0 +1,12 @@
+name:           mem
+version:        0.1
+license:        GPL
+license-file:   LICENSE
+author:         Daniel Corson
+synopsis:       memorization program
+build-type:     Simple
+build-depends:  base, haskell98, mtl, HDBC, HDBC-postgresql, old-time, random, process, containers, Util
+
+executable:     mem
+main-is:        Main.hs
+hs-source-dirs: src
