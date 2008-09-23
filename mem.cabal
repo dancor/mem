@@ -5,7 +5,7 @@ license-file:   LICENSE
 author:         Daniel Corson
 synopsis:       memorization program
 build-type:     Simple
-build-depends:  base, haskell98, mtl, HDBC, HDBC-postgresql, old-time, random, process, containers, Util
+build-depends:  base, haskell98, mtl, HDBC, HDBC-postgresql, old-time, random, process, containers, FUtil, MonadRandom
 
 executable:     mem
 main-is:        Main.hs

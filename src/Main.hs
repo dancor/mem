@@ -11,12 +11,14 @@
 module Main where
 import Control.Arrow
 import Control.Monad.Error
+import Control.Monad.Random
 import Data.Function
 import Data.List
 import qualified Data.Map as M
 import Data.Maybe
 import Database.HDBC
 import Database.HDBC.PostgreSQL
+import FUtil
 import System
 import System.Console.GetOpt
 import System.Environment
@@ -24,7 +26,6 @@ import System.IO
 import qualified System.Process as SP
 import System.Random
 import System.Time
-import Util
 
 type Qna = (String, String)
 -- this is the over-arching selection method (concerning history)
@@ -69,6 +70,7 @@ askQ (q, a) comm = do
 
 cPS = handleSqlError $ connectPostgreSQL "dbname=memorization"
 
+-- get all the history for a given question_set
 getQSetHistory :: String -> IO [(String, (ClockTime, ClockTime, Bool))]
 getQSetHistory qSet = do
   conn <- cPS
@@ -82,56 +84,67 @@ getQSetHistory qSet = do
 timePDiff :: ClockTime -> ClockTime -> Integer
 timePDiff (TOD xs xp) (TOD ys yp) = (xs - ys) * pSecInSec + xp - yp
 
-doAskMethod :: AskMethod -> QSelect -> (String, [Qna]) -> IO (Either String Qna)
-doAskMethod askMethod qSelect (qSet, qs) = case askMethod of
-  Random -> do
-    c <- chooseR qs
-    return $ Right c
-  LastCorrectDeltaTimes i -> do
-    -- find q which was gotten correct last two times asked which
-    --    most recently had timeSinceLast exceed i * (tSL - tSOneBeforeLast)
-    -- if none match, pick randomly out of others or first in file (based or qSelect)
-    -- maybe later?
-    --   if none match, find q which was most recently gotten correct 1 but not 2
-    --   if none match, find q which was gotten wrong most recently
-    --   if none match, find q
-    --   if none match, return Nothing
-    -- always use timeShowed for simplicity
-    r <- getQSetHistory qSet
-    now <- getClockTime
-    let
-      -- make place for every possible question
-      qMap = M.fromList $ mapAccum (\(q, a) n -> (q, ([], n))) qs
-      -- populate history
-      hMap = M.fromListWith (++) $ map (\(x, y) -> (x, [y])) r
-      -- only consider history items corresponding to currently existing questions
-      qhMap = M.differenceWith (\(_, n) h -> Just (h, n)) qMap hMap
-      -- sort histories most recent first
-      qho = M.map (first (sortBy (\(tS, tA, b) (tS2, tA2, b2) -> compare tS2 tS))) qhMap
-      -- anything answered in last 10 hours is off limits
-      qNonRecent = M.filter (\(v, n) -> and $ map (\(tS, tA, b) -> timePDiff now tA > 10 * 60 * 60 * pSecInSec) v) qho
-      -- find non-recent qs where last two were correct
-      lastTwoTrue (l, n) = case l of
-        [] -> False
-        [a] -> False
-        (tS, tA, b):(tS2, tA2, b2):rest -> b && b2
-      (tt, nTt) = M.partition lastTwoTrue qNonRecent
-      tDiff ((tS, tA, b):(tS2, tA2, b2):rest, n) = fromIntegral (timePDiff now tS) - i * fromIntegral(timePDiff tS tS2)
-      ttTDiff = M.filter (> 0) $ M.map tDiff tt
-      -- helper fcn
-      rQsOf k = return $ Right $ fromJust $ lookupWithKey k qs
-    if M.null ttTDiff
-      then
-        if M.null nTt
-          then do
-            -- prevent illicit postlearning (is this good or bad)
-            clrScr
-            return $ Left "All questions correct or seen too recently!  Mem something else for a bit.."
-          else case qSelect of
-            QSInitial -> rQsOf $ fst $ minimumBy (compare `on` (snd . snd)) $ M.toList nTt
-            QSRandom -> chooseR $ M.keys nTt >>= rQsOf
-      -- TODO: use minimumBy!
-      else rQsOf $ fst $ head $ sortBy (compare `on` snd) $ M.toList ttTDiff
+-- select a question to ask.  the selection is based on the AskMethod.
+-- for some AskMethod's the QSelect will also affect how to choose when
+-- multiple questions are considered equally valid for the next-to-ask under
+-- the AskMethod.
+--
+-- fixme?: rename AskMethod to QSelect and QSelect to QSubSelect?
+doAskMethod :: AskMethod -> QSelect -> (String, [Qna]) -> 
+  IO (Either String Qna)
+doAskMethod Random _qSelect (_qSet, qnas) = 
+  fmap Right . evalRandIO $ choice qnas
+doAskMethod (LastCorrectDeltaTimes i) qSelect (qSet, qnas) = do
+  -- find q which was gotten correct last two times asked which
+  --    most recently had timeSinceLast exceed i * (tSL - tSOneBeforeLast)
+  -- if none match, pick randomly out of others or first in file 
+  -- (based on qSelect)
+  --
+  -- maybe later we will implement more fully:
+  --   if none match, find q which was most recently gotten correct 1 but not 2
+  --   if none match, find q which was gotten wrong most recently
+  --   if none match, find q
+  --   if none match, return Nothing
+  --
+  -- always use timeShowed for simplicity
+  qSetHist <- getQSetHistory qSet
+  now <- getClockTime
+  let
+    -- make place for every possible question
+    qMap = M.fromList $ mapAccum (\(q, a) n -> (q, ([], n))) qnas
+    -- populate history
+    hMap = M.fromListWith (++) $ map (\(x, y) -> (x, [y])) qSetHist
+    -- only consider history items for currently existing questions
+    qhMap = M.differenceWith (\(_, n) h -> Just (h, n)) qMap hMap
+    -- sort histories most recent first
+    qho = M.map 
+      (first $ sortBy (\(tS, tA, b) (tS2, tA2, b2) -> compare tS2 tS)) qhMap
+    -- anything answered in last 10 hours is off limits
+    qNonRecent = M.filter (\(v, n) -> and $ 
+      map (\(tS, tA, b) -> timePDiff now tA > 10 * 60 * 60 * pSecInSec) v) qho
+    -- find non-recent qnas where last two were correct
+    lastTwoTrue (l, n) = case l of
+      [] -> False
+      [a] -> False
+      (tS, tA, b):(tS2, tA2, b2):rest -> b && b2
+    (tt, nTt) = M.partition lastTwoTrue qNonRecent
+    tDiff ((tS, tA, b):(tS2, tA2, b2):rest, n) = 
+      fromIntegral (timePDiff now tS) - i * fromIntegral (timePDiff tS tS2)
+    ttTDiff = M.filter (> 0) $ M.map tDiff tt
+    -- helper fcn: return the Qna with question q
+    rQsOf q = return . Right . fromJust $ lookupWithKey q qnas
+  if M.null ttTDiff
+    then if M.null nTt
+      -- prevent illicit postlearning (is this good or bad)
+      then clrScr >> return (Left 
+        "All questions correct or seen too recently!  Mem \
+        \something else for a bit..")
+      else case qSelect of
+        QSInitial -> rQsOf . fst . minimumBy (compare `on` (snd . snd)) $
+          M.toList nTt
+        QSRandom -> evalRandIO . choice $ M.keys nTt >>= rQsOf
+    -- TODO: use minimumBy!
+    else rQsOf . fst . head . sortBy (compare `on` snd) $ M.toList ttTDiff
 
 recordQ :: String -> QSelect -> AskMethod -> String -> String -> (ClockTime, ClockTime, Bool) -> IO ()
 recordQ answerer qSelect askMethod qSet q (TOD tSs tSp, TOD tAs tAp, b) = do
@@ -143,7 +156,7 @@ recordQ answerer qSelect askMethod qSet q (TOD tSs tSp, TOD tAs tAp, b) = do
   disconnect conn
 
 askQs :: String -> AskMethod -> QSelect -> (String, [Qna]) -> String -> IO ()
-askQs answerer askMethod qSelect qqs@(qSet, qs) comm = do
+askQs answerer askMethod qSelect qqs@(qSet, qnas) comm = do
   qOrErr <- doAskMethod askMethod qSelect qqs
   case qOrErr of
     Left e -> do
@@ -199,7 +212,7 @@ procOpt s (a, m, q, n) = case s of
     "r" -> (a, Random, q, n)
     "d" -> (a, LastCorrectDeltaTimes 2, q, n)
     _ -> error "not a valid askmethod"
-  FQSelect qs -> case qs of
+  FQSelect qnas -> case qnas of
     "r" -> (a, m, QSRandom, n)
     "i" -> (a, m, QSInitial, n)
     _ -> error "not a valid qselect"
