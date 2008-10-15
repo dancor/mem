@@ -1,0 +1,17 @@
+# question set: backgammon openings
+#
+# cubeless/general best first and then when different:
+# d - double-match-point best
+# g - gammon-go best
+# s - gammon-save best
+
+2 1|13/11 6/5, 24/23 13/11 s
+3 2|13/11 13/10, 24/21 13/11 ds
+4 1|24/23 13/9, 13/9 6/5 dg
+4 3|13/10 13/9, 24/21 13/9 d, 24/21 24/20 s
+5 1|24/23 13/8
+5 2|24/22 13/8, 13/11 13/8 g
+5 4|24/20 13/8, 13/9 13/8 g, 24/15 s
+6 2|24/18 13/11, 13/5 g
+6 3|24/18 13/10, 24/15 s
+6 4|8/2 6/2, 24/14 ds

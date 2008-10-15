@@ -79,7 +79,12 @@ getQSetHistory qSet = do
     )
   -- why the fuck does hdbc give me integer columns as fucking strings
   -- convert nanoseconds to picoseconds for TOD
-  return $ map (\row -> (fromSql $ row!!0, (TOD (read $ fromSql $ row!!2) ((read $ fromSql $ row!!3) * 1000), TOD (read $ fromSql $ row!!4) ((read $ fromSql $ row!!5) * 1000), fromSql $ row!!1))) ret
+  return . flip map ret $ \ row -> (fromSql $ row!!0, (
+      TOD (read . fromSql $ row!!2) ((read . fromSql $ row!!3) * 1000), 
+      TOD (read . fromSql $ row!!4) ((read . fromSql $ row!!5) * 1000),
+      fromSql $ row!!1
+      )
+    )
 
 timePDiff :: ClockTime -> ClockTime -> Integer
 timePDiff (TOD xs xp) (TOD ys yp) = (xs - ys) * pSecInSec + xp - yp
@@ -159,9 +164,7 @@ askQs :: String -> AskMethod -> QSelect -> (String, [Qna]) -> String -> IO ()
 askQs answerer askMethod qSelect qqs@(qSet, qnas) comm = do
   qOrErr <- doAskMethod askMethod qSelect qqs
   case qOrErr of
-    Left e -> do
-      putStrLnF e
-      return ()
+    Left e -> putStrLnF e
     Right q -> do
       (tS, tA, b, thenQuit) <- askQ q comm
       recordQ answerer qSelect askMethod qSet (fst q) (tS, tA, b)
