@@ -9,6 +9,7 @@
  -}
 
 module Main where
+
 import Control.Arrow
 import Control.Monad.Error
 import Control.Monad.Random
@@ -80,7 +81,7 @@ getQSetHistory qSet = do
   -- why the fuck does hdbc give me integer columns as fucking strings
   -- convert nanoseconds to picoseconds for TOD
   return . flip map ret $ \ row -> (fromSql $ row!!0, (
-      TOD (read . fromSql $ row!!2) ((read . fromSql $ row!!3) * 1000), 
+      TOD (read . fromSql $ row!!2) ((read . fromSql $ row!!3) * 1000),
       TOD (read . fromSql $ row!!4) ((read . fromSql $ row!!5) * 1000),
       fromSql $ row!!1
       )
@@ -95,14 +96,14 @@ timePDiff (TOD xs xp) (TOD ys yp) = (xs - ys) * pSecInSec + xp - yp
 -- the AskMethod.
 --
 -- fixme?: rename AskMethod to QSelect and QSelect to QSubSelect?
-doAskMethod :: AskMethod -> QSelect -> (String, [Qna]) -> 
+doAskMethod :: AskMethod -> QSelect -> (String, [Qna]) ->
   IO (Either String Qna)
-doAskMethod Random _qSelect (_qSet, qnas) = 
+doAskMethod Random _qSelect (_qSet, qnas) =
   fmap Right . evalRandIO $ choice qnas
 doAskMethod (LastCorrectDeltaTimes i) qSelect (qSet, qnas) = do
   -- find q which was gotten correct last two times asked which
   --    most recently had timeSinceLast exceed i * (tSL - tSOneBeforeLast)
-  -- if none match, pick randomly out of others or first in file 
+  -- if none match, pick randomly out of others or first in file
   -- (based on qSelect)
   --
   -- maybe later we will implement more fully:
@@ -122,10 +123,10 @@ doAskMethod (LastCorrectDeltaTimes i) qSelect (qSet, qnas) = do
     -- only consider history items for currently existing questions
     qhMap = M.differenceWith (\(_, n) h -> Just (h, n)) qMap hMap
     -- sort histories most recent first
-    qho = M.map 
+    qho = M.map
       (first $ sortBy (\(tS, tA, b) (tS2, tA2, b2) -> compare tS2 tS)) qhMap
     -- anything answered in last 10 hours is off limits
-    qNonRecent = M.filter (\(v, n) -> and $ 
+    qNonRecent = M.filter (\(v, n) -> and $
       map (\(tS, tA, b) -> timePDiff now tA > 10 * 60 * 60 * pSecInSec) v) qho
     -- find non-recent qnas where last two were correct
     lastTwoTrue (l, n) = case l of
@@ -133,7 +134,7 @@ doAskMethod (LastCorrectDeltaTimes i) qSelect (qSet, qnas) = do
       [a] -> False
       (tS, tA, b):(tS2, tA2, b2):rest -> b && b2
     (tt, nTt) = M.partition lastTwoTrue qNonRecent
-    tDiff ((tS, tA, b):(tS2, tA2, b2):rest, n) = 
+    tDiff ((tS, tA, b):(tS2, tA2, b2):rest, n) =
       fromIntegral (timePDiff now tS) - i * fromIntegral (timePDiff tS tS2)
     ttTDiff = M.filter (> 0) $ M.map tDiff tt
     -- helper fcn: return the Qna with question q
@@ -141,7 +142,7 @@ doAskMethod (LastCorrectDeltaTimes i) qSelect (qSet, qnas) = do
   if M.null ttTDiff
     then if M.null nTt
       -- prevent illicit postlearning (is this good or bad)
-      then clrScr >> return (Left 
+      then clrScr >> return (Left
         "All questions correct or seen too recently!  Mem \
         \something else for a bit..")
       else case qSelect of
