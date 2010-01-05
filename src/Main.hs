@@ -15,7 +15,6 @@ import Control.Monad.Error
 import Control.Monad.Random
 import Data.Function
 import Data.List
-import qualified Data.Map as M
 import Data.Maybe
 import Database.HDBC
 import Database.HDBC.PostgreSQL
@@ -24,9 +23,10 @@ import System
 import System.Console.GetOpt
 import System.Environment
 import System.IO
-import qualified System.Process as SP
 import System.Random
 import System.Time
+import qualified Data.Map as M
+import qualified System.Process as SP
 
 type Qna = (String, String)
 -- this is the over-arching selection method (concerning history)
@@ -67,7 +67,7 @@ askQ (q, a) comm = do
   --putStrLnF (comm ++ " " ++ q)
   putStrLnF "\nCorrect (enter for yes, q for yes and quit, else for no)?"
   c <- getLine
-  return $ (tS, tA, c == "" || c == "q", c == "q")
+  return (tS, tA, c == "" || c == "q", c == "q")
 
 cPS = handleSqlError $ connectPostgreSQL "dbname=memorization"
 
@@ -192,7 +192,7 @@ readQs s = let qSetPrefix = "# question set: " in
       let ([prefAndQSet], rest) = splitAt 1 s
           qSet = drop (length qSetPrefix) prefAndQSet
           qsME = map readQ $ rest
-          qsMOrErr = sequence $ qsME in
+          qsMOrErr = sequence qsME in
         case qsMOrErr of
           Left e -> Left $ show (fromJust (findIndex isLeft qsME) + 1) ++ ": " ++ e
           Right qsM -> Right (qSet, catMaybes qsM)
@@ -225,14 +225,15 @@ procOpt s (a, m, q, n) = case s of
 main :: IO ()
 main = do
   args <- getArgs
-  (opts, qnaFNs) <- case getOpt Permute options args of
-    (o, n, []) -> return (o, n)
-    (_, _, errs) -> ioError (userError (concat errs ++ usageInfo header options))
-      where header = "Usage:"
-  -- currently must specify exactly one mem file
   let
+    header = "Usage:"
+    (opts, qnaFNs) = case getOpt Permute options args of
+      (o, n, []) -> (o, n)
+      (_, _, errs) -> error $ concat errs ++ usageInfo header options
+    -- currently must specify exactly one mem file
     [qnaFN, comm] = if length qnaFNs == 1 then qnaFNs ++ ["false"] else qnaFNs
-  let (answerer, askMethod, qSelect, maxLineMby) = foldr procOpt ("", LastCorrectDeltaTimes 2, QSInitial, Nothing) opts
+    (answerer, askMethod, qSelect, maxLineMby) =
+      foldr procOpt ("", LastCorrectDeltaTimes 2, QSInitial, Nothing) opts
   qnaF <- openFile qnaFN ReadMode
   c <- hGetContents qnaF
   let
@@ -242,3 +243,4 @@ main = do
   case readQs $ ls of
     Left e -> putStrLnF $ "error parsing " ++ qnaFN ++ ":" ++ e
     Right r -> askQs answerer askMethod qSelect r comm
+
