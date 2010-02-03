@@ -59,6 +59,7 @@ askQ (q, a) comm = do
       putStrLnF a
       return False
   -}
+  when (r == a) $ putStrLn "matches"
   putStrLnF $ "\n" ++ a
   (pI, pO, pE, pH) <- SP.runInteractiveCommand (comm ++ " " ++ q)
   pC <- hGetContents pO
