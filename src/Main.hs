@@ -186,18 +186,22 @@ readQ s =
         let (l, r) = splitAt i s in
           Right $ Just (l, subst "<BR>" "\n" $ drop 1 r)
 
+-- switch to parsec?  isLeft is ghetto, at least kill that..
 readQs :: [String] -> Either String (String, [Qna])
-readQs s = let qSetPrefix = "# question set: " in
-  if length s >= 1 && isPrefixOf qSetPrefix (head s)
-    then
-      let ([prefAndQSet], rest) = splitAt 1 s
-          qSet = drop (length qSetPrefix) prefAndQSet
-          qsME = map readQ $ rest
-          qsMOrErr = sequence qsME in
-        case qsMOrErr of
-          Left e -> Left $ show (fromJust (findIndex isLeft qsME) + 1) ++ ": " ++ e
-          Right qsM -> Right (qSet, catMaybes qsM)
-    else Left "1: no question set specification found"
+readQs s = if length s >= 1 && isPrefixOf qSetPrefix (head s)
+  then
+    case qsMOrErr of
+      Left e -> Left $ show (fromJust (findIndex isLeft qsME) + 1) ++ ": " ++ e
+      Right qsM -> Right (qSet, catMaybes qsM)
+  else Left "1: no question set specification found"
+  where
+  qSetPrefix = "# question set: "
+  prefAndQSet:rest = s
+  qSet = drop (length qSetPrefix) prefAndQSet
+  qsME = map readQ $ rest
+  qsMOrErr = sequence qsME
+  isLeft (Left _) = True
+  isLeft _ = False
 
 data Flag = FUser String | FAskMethod String | FQSelect String | FMaxLine String
 options :: [OptDescr Flag]
