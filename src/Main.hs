@@ -29,17 +29,29 @@ import qualified Data.Map as M
 import qualified System.Process as SP
 
 type Qna = (String, String)
--- this is the over-arching selection method (concerning history)
-data AskMethod = Random | LastCorrectDeltaTimes Float
-instance Show AskMethod where
-  show Random = "random"
-  show (LastCorrectDeltaTimes i) = "lastCorrectDeltaTimes " ++ show i
--- this is the secondary selection method (when history doesn't say which)
-data QSelect = QSRandom | QSInitial
-instance Show QSelect where
-  show QSRandom = "random"
-  show QSInitial = "initial"
 
+-- select a question possibly based on history in some way
+data QSelect = QSRandom | QSLastCorrectDeltaTimes Float
+
+-- select a question when nothing is suggested by history
+data QNewSelect = QNSRandom | QNSInitial
+
+-- things that get stringified into the database in some way
+class DbStr a where
+  dbStr :: a -> String
+
+instance DbStr QSelect where
+  dbStr QSRandom = "random"
+  dbStr (QSLastCorrectDeltaTimes i) = "lastCorrectDeltaTimes " ++ show i
+
+instance DbStr QNewSelect where
+  dbStr QNSRandom = "random"
+  dbStr QNSInitial = "initial"
+
+data Flag = FUser String | FQSelect String | FQNewSelect String | 
+  FMaxLine String
+
+putStrLnF :: String -> IO ()
 putStrLnF s = putStrLn s >> hFlush stdout
 
 askQ :: Qna -> String -> IO (ClockTime, ClockTime, Bool, Bool)
@@ -70,16 +82,18 @@ askQ (q, a) comm = do
   c <- getLine
   return (tS, tA, c == "" || c == "q", c == "q")
 
+cPS :: IO Connection
 cPS = handleSqlError $ connectPostgreSQL "dbname=memorization"
 
 -- get all the history for a given question_set
 getQSetHistory :: String -> IO [(String, (ClockTime, ClockTime, Bool))]
 getQSetHistory qSet = do
   conn <- cPS
-  ret <- withTransaction conn (\conn -> do
-    quickQuery conn "SELECT question, got_correct, asked_time, asked_time_nanosec, answered_time, answered_time_nanosec, question_select_method FROM ask_log WHERE question_set = ?" [toSql qSet]
-    )
-  -- why the fuck does hdbc give me integer columns as fucking strings
+  ret <- withTransaction conn $ \ c -> quickQuery c
+    "SELECT question, got_correct, asked_time, asked_time_nanosec, \
+    \answered_time, answered_time_nanosec, question_select_method FROM \
+    \ask_log WHERE question_set = ?" [toSql qSet]
+  -- why does hdbc give integer columns as strings?!
   -- convert nanoseconds to picoseconds for TOD
   return . flip map ret $ \ row -> (fromSql $ row!!0, (
       TOD (read . fromSql $ row!!2) ((read . fromSql $ row!!3) * 1000),
@@ -91,17 +105,11 @@ getQSetHistory qSet = do
 timePDiff :: ClockTime -> ClockTime -> Integer
 timePDiff (TOD xs xp) (TOD ys yp) = (xs - ys) * pSecInSec + xp - yp
 
--- select a question to ask.  the selection is based on the AskMethod.
--- for some AskMethod's the QSelect will also affect how to choose when
--- multiple questions are considered equally valid for the next-to-ask under
--- the AskMethod.
---
--- fixme?: rename AskMethod to QSelect and QSelect to QSubSelect?
-doAskMethod :: AskMethod -> QSelect -> (String, [Qna]) ->
+doQSelect :: QSelect -> QNewSelect -> (String, [Qna]) ->
   IO (Either String Qna)
-doAskMethod Random _qSelect (_qSet, qnas) =
+doQSelect QSRandom _qSelect (_qSet, qnas) =
   fmap Right . evalRandIO $ choice qnas
-doAskMethod (LastCorrectDeltaTimes i) qSelect (qSet, qnas) = do
+doQSelect (QSLastCorrectDeltaTimes i) qSelect (qSet, qnas) = do
   -- find q which was gotten correct last two times asked which
   --    most recently had timeSinceLast exceed i * (tSL - tSOneBeforeLast)
   -- if none match, pick randomly out of others or first in file
@@ -114,21 +122,22 @@ doAskMethod (LastCorrectDeltaTimes i) qSelect (qSet, qnas) = do
   --   if none match, return Nothing
   --
   -- always use timeShowed for simplicity
-  qSetHist <- getQSetHistory qSet
+  qSetHistory <- getQSetHistory qSet
   now <- getClockTime
   let
     -- make place for every possible question
-    qMap = M.fromList $ mapAccum (\(q, a) n -> (q, ([], n))) qnas
+    qMap = M.fromList $ mapAccum (\ (q, a) n -> (q, ([], n))) qnas
     -- populate history
-    hMap = M.fromListWith (++) $ map (\(x, y) -> (x, [y])) qSetHist
+    historyMap = M.fromListWith (++) $ map (second (:[])) qSetHistory
     -- only consider history items for currently existing questions
-    qhMap = M.differenceWith (\(_, n) h -> Just (h, n)) qMap hMap
+    qhMap = M.differenceWith (\ (_, n) h -> Just (h, n)) qMap historyMap
     -- sort histories most recent first
     qho = M.map
-      (first $ sortBy (\(tS, tA, b) (tS2, tA2, b2) -> compare tS2 tS)) qhMap
-    -- anything answered in last 10 hours is off limits
-    qNonRecent = M.filter (\(v, n) -> and $
-      map (\(tS, tA, b) -> timePDiff now tA > 10 * 60 * 60 * pSecInSec) v) qho
+      (first $ sortBy (\(tS, tA, b) (tS2, tA2, b2) -> compare tS2 tS))
+      qhMap
+    -- anything answered too recently is off limits
+    qNonRecent = M.filter (\ (v, n) -> and $
+      map (\(tS, tA, b) -> timePDiff now tA > 2 * 60 * 60 * pSecInSec) v) qho
     -- find non-recent qnas where last two were correct
     lastTwoTrue (l, n) = case l of
       [] -> False
@@ -147,24 +156,32 @@ doAskMethod (LastCorrectDeltaTimes i) qSelect (qSet, qnas) = do
         "All questions correct or seen too recently!  Mem \
         \something else for a bit..")
       else case qSelect of
-        QSInitial -> rQsOf . fst . minimumBy (compare `on` (snd . snd)) $
+        QNSInitial -> rQsOf . fst . minimumBy (compare `on` (snd . snd)) $
           M.toList nTt
-        QSRandom -> evalRandIO . choice $ M.keys nTt >>= rQsOf
+        QNSRandom -> evalRandIO . choice $ M.keys nTt >>= rQsOf
     -- TODO: use minimumBy!
     else rQsOf . fst . head . sortBy (compare `on` snd) $ M.toList ttTDiff
 
-recordQ :: String -> QSelect -> AskMethod -> String -> String -> (ClockTime, ClockTime, Bool) -> IO ()
+recordQ :: String -> QNewSelect -> QSelect -> String -> String -> 
+  (ClockTime, ClockTime, Bool) -> IO ()
 recordQ answerer qSelect askMethod qSet q (TOD tSs tSp, TOD tAs tAp, b) = do
   conn <- cPS
-  ret <- withTransaction conn (\conn -> do
-    run conn "INSERT INTO ask_log (question_set, question, got_correct, asked_time, asked_time_nanosec, answered_time, answered_time_nanosec, question_select_method, question_sub_select_method, answerer) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-      [toSql qSet, toSql q, toSql b, SqlInteger tSs, SqlInteger $ tSp `div` 1000, SqlInteger tAs, SqlInteger $ tAp `div` 1000, toSql $ show askMethod, toSql $ show qSelect, toSql answerer])
-  --putStrLnF $ show ret
+  ret <- withTransaction conn $ \ c -> run c 
+    "INSERT INTO ask_log (question_set, question, got_correct, asked_time, \
+    \asked_time_nanosec, answered_time, answered_time_nanosec, \
+    \question_select_method, question_sub_select_method, answerer) VALUES \
+    \(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    [
+      toSql qSet, toSql q, toSql b, SqlInteger tSs, 
+      SqlInteger $ tSp `div` 1000, SqlInteger tAs, 
+      SqlInteger $ tAp `div` 1000, toSql $ dbStr askMethod, 
+      toSql $ dbStr qSelect, toSql answerer
+      ]
   disconnect conn
 
-askQs :: String -> AskMethod -> QSelect -> (String, [Qna]) -> String -> IO ()
+askQs :: String -> QSelect -> QNewSelect -> (String, [Qna]) -> String -> IO ()
 askQs answerer askMethod qSelect qqs@(qSet, qnas) comm = do
-  qOrErr <- doAskMethod askMethod qSelect qqs
+  qOrErr <- doQSelect askMethod qSelect qqs
   case qOrErr of
     Left e -> putStrLnF e
     Right q -> do
@@ -203,27 +220,26 @@ readQs s = if length s >= 1 && isPrefixOf qSetPrefix (head s)
   isLeft (Left _) = True
   isLeft _ = False
 
-data Flag = FUser String | FAskMethod String | FQSelect String | FMaxLine String
 options :: [OptDescr Flag]
 options = [
   Option ['u'] ["user"] (ReqArg FUser "USER")  "user name",
-  Option ['a'] ["askmethod"] (ReqArg FAskMethod "r|d")
+  Option ['a'] ["askmethod"] (ReqArg FQSelect "r|d")
     "askmethod: random or doubling",
-  Option ['q'] ["qselect"] (ReqArg FQSelect "r|i")
+  Option ['q'] ["qselect"] (ReqArg FQNewSelect "r|i")
     "qselect: random or initial",
   Option ['h'] ["max"] (ReqArg FMaxLine "N")  "maximum line number"]
-type OptVals = (String, AskMethod, QSelect, Maybe Int)
+type OptVals = (String, QSelect, QNewSelect, Maybe Int)
 
 procOpt :: Flag -> OptVals -> OptVals
 procOpt s (a, m, q, n) = case s of
   FUser answerer -> (answerer, m, q, n)
-  FAskMethod meth -> case meth of
-    "r" -> (a, Random, q, n)
-    "d" -> (a, LastCorrectDeltaTimes 2, q, n)
+  FQSelect meth -> case meth of
+    "r" -> (a, QSRandom, q, n)
+    "d" -> (a, QSLastCorrectDeltaTimes 2, q, n)
     _ -> error "not a valid askmethod"
-  FQSelect qnas -> case qnas of
-    "r" -> (a, m, QSRandom, n)
-    "i" -> (a, m, QSInitial, n)
+  FQNewSelect qnas -> case qnas of
+    "r" -> (a, m, QNSRandom, n)
+    "i" -> (a, m, QNSInitial, n)
     _ -> error "not a valid qselect"
   FMaxLine n' -> (a, m, q, Just $ read n')
 
@@ -238,7 +254,7 @@ main = do
     -- currently must specify exactly one mem file
     [qnaFN, comm] = if length qnaFNs == 1 then qnaFNs ++ ["false"] else qnaFNs
     (answerer, askMethod, qSelect, maxLineMby) =
-      foldr procOpt ("", LastCorrectDeltaTimes 2, QSInitial, Nothing) opts
+      foldr procOpt ("", QSLastCorrectDeltaTimes 2, QNSRandom, Nothing) opts
   qnaF <- openFile qnaFN ReadMode
   c <- hGetContents qnaF
   let
