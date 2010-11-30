@@ -151,8 +151,7 @@ doQSelect (QSLastCorrectDeltaTimes i) qSelect (qSet, qnas) = do
     rQsOf q = return . Right . fromJust $ lookupWithKey q qnas
   if M.null ttTDiff
     then if M.null nTt
-      -- prevent illicit postlearning (is this good or bad)
-      then clrScr >> return (Left
+      then return (Left
         "All questions correct or seen too recently!  Mem \
         \something else for a bit..")
       else case qSelect of
@@ -188,11 +187,7 @@ askQs answerer askMethod qSelect qqs@(qSet, qnas) comm = do
     Right q -> do
       (tS, tA, b, thenQuit) <- askQ q comm
       io $ recordQ answerer qSelect askMethod qSet (fst q) (tS, tA, b)
-      if thenQuit
-        then
-          -- prevent illicit postlearning (is this good or bad)
-          io clrScr
-        else askQs answerer askMethod qSelect qqs comm
+      unless thenQuit $ askQs answerer askMethod qSelect qqs comm
 
 readQ :: String -> Either String (Maybe Qna)
 readQ s =
