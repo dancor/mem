@@ -10,6 +10,7 @@
 
 module Main where
 
+import Control.Applicative
 import Control.Arrow
 import Control.Monad.Error
 import Control.Monad.Random
@@ -21,6 +22,7 @@ import Database.HDBC.PostgreSQL
 import FUtil
 import System
 import System.Console.GetOpt
+import System.Console.Haskeline
 import System.Environment
 import System.IO
 import System.Random
@@ -54,13 +56,13 @@ data Flag = FUser String | FQSelect String | FQNewSelect String |
 putStrLnF :: String -> IO ()
 putStrLnF s = putStrLn s >> hFlush stdout
 
-askQ :: Qna -> String -> IO (ClockTime, ClockTime, Bool, Bool)
+askQ :: Qna -> String -> InputT IO (ClockTime, ClockTime, Bool, Bool)
 askQ (q, a) comm = do
-  clrScr
-  putStrLnF q
-  tS <- getClockTime
-  r <- getLine
-  tA <- getClockTime
+  io clrScr
+  io $ putStrLnF q
+  tS <- io getClockTime
+  r <- fromMaybe "" <$> getInputLine ""
+  tA <- io getClockTime
   {- check mode should be an option (but not default?)
   if r == a
     then do
@@ -71,15 +73,13 @@ askQ (q, a) comm = do
       putStrLnF a
       return False
   -}
-  when (r == a) $ putStrLn "matches"
-  putStrLnF $ "\n" ++ a
-  (pI, pO, pE, pH) <- SP.runInteractiveCommand (comm ++ " " ++ q)
-  pC <- hGetContents pO
-  putStr pC
-  --SP.runCommand (comm ++ " " ++ q)
-  --putStrLnF (comm ++ " " ++ q)
-  putStrLnF "\nCorrect (enter for yes, q for yes and quit, else for no)?"
-  c <- getLine
+  io . when (r == a) $ putStrLn "matches"
+  io . putStrLnF $ "\n" ++ a
+  (pI, pO, pE, pH) <- io $ SP.runInteractiveCommand (comm ++ " " ++ q)
+  pC <- io $ hGetContents pO
+  io $ putStr pC
+  io $ putStrLnF "\nCorrect (enter for yes, q for yes and quit, else for no)?"
+  c <- fromMaybe "" <$> getInputLine ""
   return (tS, tA, c == "" || c == "q", c == "q")
 
 cPS :: IO Connection
@@ -179,18 +179,19 @@ recordQ answerer qSelect askMethod qSet q (TOD tSs tSp, TOD tAs tAp, b) = do
       ]
   disconnect conn
 
-askQs :: String -> QSelect -> QNewSelect -> (String, [Qna]) -> String -> IO ()
+askQs :: String -> QSelect -> QNewSelect -> (String, [Qna]) -> String -> 
+  InputT IO ()
 askQs answerer askMethod qSelect qqs@(qSet, qnas) comm = do
-  qOrErr <- doQSelect askMethod qSelect qqs
+  qOrErr <- io $ doQSelect askMethod qSelect qqs
   case qOrErr of
-    Left e -> putStrLnF e
+    Left e -> io $ putStrLnF e
     Right q -> do
       (tS, tA, b, thenQuit) <- askQ q comm
-      recordQ answerer qSelect askMethod qSet (fst q) (tS, tA, b)
+      io $ recordQ answerer qSelect askMethod qSet (fst q) (tS, tA, b)
       if thenQuit
         then
           -- prevent illicit postlearning (is this good or bad)
-          clrScr
+          io clrScr
         else askQs answerer askMethod qSelect qqs comm
 
 readQ :: String -> Either String (Maybe Qna)
@@ -244,8 +245,8 @@ procOpt s (a, m, q, n) = case s of
   FMaxLine n' -> (a, m, q, Just $ read n')
 
 main :: IO ()
-main = do
-  args <- getArgs
+main = runInputT defaultSettings $ do
+  args <- io getArgs
   let
     header = "Usage:"
     (opts, qnaFNs) = case getOpt Permute options args of
@@ -255,13 +256,13 @@ main = do
     [qnaFN, comm] = if length qnaFNs == 1 then qnaFNs ++ ["false"] else qnaFNs
     (answerer, askMethod, qSelect, maxLineMby) =
       foldr procOpt ("", QSLastCorrectDeltaTimes 2, QNSRandom, Nothing) opts
-  qnaF <- openFile qnaFN ReadMode
-  c <- hGetContents qnaF
+  qnaF <- io $ openFile qnaFN ReadMode
+  c <- io $ hGetContents qnaF
   let
     ls = case maxLineMby of
       Nothing -> lines c
       Just maxLine -> take maxLine $ lines c
   case readQs $ ls of
-    Left e -> putStrLnF $ "error parsing " ++ qnaFN ++ ":" ++ e
+    Left e -> io . putStrLnF $ "error parsing " ++ qnaFN ++ ":" ++ e
     Right r -> askQs answerer askMethod qSelect r comm
 
