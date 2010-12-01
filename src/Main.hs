@@ -17,6 +17,7 @@ import Control.Monad.Random
 import Data.Function
 import Data.List
 import Data.Maybe
+import Data.Ord
 import Database.HDBC
 import Database.HDBC.PostgreSQL
 import FUtil
@@ -30,7 +31,13 @@ import System.Time
 import qualified Data.Map as M
 import qualified System.Process as SP
 
-type Qna = (String, String)
+type Qna = (Que, Ans)
+
+type Que = String
+
+type Ans = String
+
+type QHist = (ClockTime, Bool)
 
 -- select a question possibly based on history in some way
 data QSelect = QSRandom | QSLastCorrectDeltaTimes Float
@@ -85,8 +92,7 @@ askQ (q, a) comm = do
 cPS :: IO Connection
 cPS = handleSqlError $ connectPostgreSQL "dbname=memorization"
 
--- get all the history for a given question_set
-getQSetHistory :: String -> IO [(String, (ClockTime, ClockTime, Bool))]
+getQSetHistory :: String -> IO [(Que, QHist)]
 getQSetHistory qSet = do
   conn <- cPS
   ret <- withTransaction conn $ \ c -> quickQuery c
@@ -97,7 +103,7 @@ getQSetHistory qSet = do
   -- convert nanoseconds to picoseconds for TOD
   return . flip map ret $ \ row -> (fromSql $ row!!0, (
       TOD (read . fromSql $ row!!2) ((read . fromSql $ row!!3) * 1000),
-      TOD (read . fromSql $ row!!4) ((read . fromSql $ row!!5) * 1000),
+      --TOD (read . fromSql $ row!!4) ((read . fromSql $ row!!5) * 1000),
       fromSql $ row!!1
       )
     )
@@ -105,61 +111,63 @@ getQSetHistory qSet = do
 timePDiff :: ClockTime -> ClockTime -> Integer
 timePDiff (TOD xs xp) (TOD ys yp) = (xs - ys) * pSecInSec + xp - yp
 
-doQSelect :: QSelect -> QNewSelect -> (String, [Qna]) ->
-  IO (Either String Qna)
-doQSelect QSRandom _qSelect (_qSet, qnas) =
-  fmap Right . evalRandIO $ choice qnas
-doQSelect (QSLastCorrectDeltaTimes i) qSelect (qSet, qnas) = do
+mapMultiPartition :: (Ord k) => [v -> Bool] -> M.Map k v -> [M.Map k v]
+mapMultiPartition (p:ps) m = t : mapMultiPartition ps f where
+  (t, f) = M.partition p m
+mapMultiPartition _ m = [m]
+
+dsuSort :: (Ord b) => (a -> b) -> [a] -> [a]
+dsuSort f a = map snd . sortBy (comparing fst) $ zip (map f a) a
+
+doQSelect :: QSelect -> QNewSelect -> (String, [Qna]) -> IO (Either String Qna)
+doQSelect QSRandom _ (_, qnas) = Right <$> evalRandIO (choice qnas)
+doQSelect (QSLastCorrectDeltaTimes lcdt) qNewSelect (qSet, qnas) = 
   -- find q which was gotten correct last two times asked which
-  --    most recently had timeSinceLast exceed i * (tSL - tSOneBeforeLast)
-  -- if none match, pick randomly out of others or first in file
-  -- (based on qSelect)
-  --
-  -- maybe later we will implement more fully:
-  --   if none match, find q which was most recently gotten correct 1 but not 2
-  --   if none match, find q which was gotten wrong most recently
-  --   if none match, find q
-  --   if none match, return Nothing
-  --
-  -- always use timeShowed for simplicity
-  qSetHistory <- getQSetHistory qSet
-  now <- getClockTime
-  let
-    -- make place for every possible question
-    qMap = M.fromList $ mapAccum (\ (q, a) n -> (q, ([], n))) qnas
-    -- populate history
-    historyMap = M.fromListWith (++) $ map (second (:[])) qSetHistory
-    -- only consider history items for currently existing questions
-    qhMap = M.differenceWith (\ (_, n) h -> Just (h, n)) qMap historyMap
-    -- sort histories most recent first
-    qho = M.map
-      (first $ sortBy (\(tS, tA, b) (tS2, tA2, b2) -> compare tS2 tS))
-      qhMap
-    -- anything answered too recently is off limits
-    qNonRecent = M.filter (\ (v, n) -> and $
-      map (\(tS, tA, b) -> timePDiff now tA > 2 * 60 * 60 * pSecInSec) v) qho
-    -- find non-recent qnas where last two were correct
-    lastTwoTrue (l, n) = case l of
-      [] -> False
-      [a] -> False
-      (tS, tA, b):(tS2, tA2, b2):rest -> b && b2
-    (tt, nTt) = M.partition lastTwoTrue qNonRecent
-    tDiff ((tS, tA, b):(tS2, tA2, b2):rest, n) =
-      fromIntegral (timePDiff now tS) - i * fromIntegral (timePDiff tS tS2)
-    ttTDiff = M.filter (> 0) $ M.map tDiff tt
-    -- helper fcn: return the Qna with question q
-    rQsOf q = return . Right . fromJust $ lookupWithKey q qnas
-  if M.null ttTDiff
-    then if M.null nTt
-      then return (Left
-        "All questions correct or seen too recently!  Mem \
-        \something else for a bit..")
-      else case qSelect of
-        QNSInitial -> rQsOf . fst . minimumBy (compare `on` (snd . snd)) $
-          M.toList nTt
-        QNSRandom -> evalRandIO . choice $ M.keys nTt >>= rQsOf
-    -- TODO: use minimumBy!
-    else rQsOf . fst . head . sortBy (compare `on` snd) $ M.toList ttTDiff
+  --    most recently had timeSinceLast exceed lcdt * (tSL - tSOneBeforeLast)
+  -- else, pick least recently asked q that isn't too recent
+  -- else, pick randomly out of others or first in file (based on qNewSelect)
+  liftM2 f (getQSetHistory qSet) getClockTime >>= evalRandIO where
+  f qSetHistory now = 
+    head . (\ nev -> map (Right . second (snd . snd)) (
+        dsuSort (lastTwoTimesDiff now lcdt . snd) (M.toList qLastTwoRight) ++
+        sortBy (flip $ comparing snd) (M.toList qLastOneRight) ++
+        sortBy (flip $ comparing snd) (M.toList qEverAsked) ++ nev) ++ 
+      [partyOver]) <$>
+    qnsF (M.toList qNeverAsked)
+    where
+    [qLastTwoRight, qLastOneRight, qEverAsked, qNeverAsked] = 
+      mapMultiPartition [lastTwoRight, lastOneRight, everAsked] okQHists
+    okQHists :: M.Map Que ([QHist], (Int, Ans))
+    okQHists = 
+      M.filter (\ (h, _) -> and $ 
+        map ((> 2 * 60 * 60 * pSecInSec) . timePDiff now . fst) h) .
+      M.map (first sort) $
+      M.differenceWith (\ (_, (n, a)) h -> Just (h, (n, a)))
+        (M.fromList $ zipWith (\ n (q, a) -> (q, ([], (n, a)))) [1 ..] qnas)
+        (M.fromListWith (++) $ map (second (:[])) qSetHistory)
+    qnsF :: [(Que, ([QHist], (Int, Ans)))] -> 
+      Rand StdGen [(Que, ([QHist], (Int, Ans)))]
+    qnsF = case qNewSelect of
+      QNSInitial -> return . sortBy (comparing $ fst . snd . snd)
+      QNSRandom -> shuffle
+    partyOver = Left $
+      "All questions correct or seen too recently!  Mem something else for " ++
+      "a bit.."
+
+lastTwoTimesDiff :: ClockTime -> Float -> ([QHist], a) -> Float
+lastTwoTimesDiff now lcdt ((t, _):(t2, _):_, _) =
+  fromIntegral (timePDiff now t) - lcdt * fromIntegral (timePDiff t t2)
+
+lastTwoRight :: ([QHist], a) -> Bool
+lastTwoRight ((_, t):(_, t2):_, _) = t && t2
+lastTwoRight _ = False
+
+lastOneRight :: ([QHist], a) -> Bool
+lastOneRight ((_, t):_, _) = t
+lastOneRight _ = False
+
+everAsked :: ([QHist], a) -> Bool
+everAsked q = length (fst q) > 0
 
 recordQ :: String -> QNewSelect -> QSelect -> String -> String -> 
   (ClockTime, ClockTime, Bool) -> IO ()
