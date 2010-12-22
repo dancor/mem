@@ -65,7 +65,6 @@ putStrLnF s = putStrLn s >> hFlush stdout
 
 askQ :: Qna -> String -> InputT IO (ClockTime, ClockTime, Bool, Bool)
 askQ (q, a) comm = do
-  io clrScr
   io $ putStrLnF q
   tS <- io getClockTime
   r <- fromMaybe "" <$> getInputLine ""
@@ -102,8 +101,8 @@ getQSetHistory qSet = do
   -- why does hdbc give integer columns as strings?!
   -- convert nanoseconds to picoseconds for TOD
   return . flip map ret $ \ row -> (fromSql $ row!!0, (
-      TOD (read . fromSql $ row!!2) ((read . fromSql $ row!!3) * 1000),
-      --TOD (read . fromSql $ row!!4) ((read . fromSql $ row!!5) * 1000),
+      --TOD (read . fromSql $ row!!2) ((read . fromSql $ row!!3) * 1000),
+      TOD (read . fromSql $ row!!4) ((read . fromSql $ row!!5) * 1000),
       fromSql $ row!!1
       )
     )
@@ -116,32 +115,29 @@ mapMultiPartition (p:ps) m = t : mapMultiPartition ps f where
   (t, f) = M.partition p m
 mapMultiPartition _ m = [m]
 
-dsuSort :: (Ord b) => (a -> b) -> [a] -> [a]
-dsuSort f a = map snd . sortBy (comparing fst) $ zip (map f a) a
-
 doQSelect :: QSelect -> QNewSelect -> (String, [Qna]) -> IO (Either String Qna)
 doQSelect QSRandom _ (_, qnas) = Right <$> evalRandIO (choice qnas)
 doQSelect (QSLastCorrectDeltaTimes lcdt) qNewSelect (qSet, qnas) = 
-  -- find q which was gotten correct last two times asked which
-  --    most recently had timeSinceLast exceed lcdt * (tSL - tSOneBeforeLast)
-  -- else, pick least recently asked q that isn't too recent
-  -- else, pick randomly out of others or first in file (based on qNewSelect)
   liftM2 f (getQSetHistory qSet) getClockTime >>= evalRandIO where
   f qSetHistory now = 
-    head . (\ nev -> map (Right . second (snd . snd)) (
-        dsuSort (lastTwoTimesDiff now lcdt . snd) (M.toList qLastTwoRight) ++
+    head . (\ nev -> map (Right . second (snd . snd)) (qLastTwoRightReady ++
         sortBy (flip $ comparing snd) (M.toList qLastOneRight) ++
-        sortBy (flip $ comparing snd) (M.toList qEverAsked) ++ nev) ++ 
+        sortBy (flip $ comparing snd) (M.toList qEverAsked) ++ 
+        nev) ++ 
       [partyOver]) <$>
     qnsF (M.toList qNeverAsked)
     where
+    qLastTwoRightReady = map fst . sortBy (flip $ comparing snd) .
+      filter ((> 0) . snd) . 
+      map (\ x -> (x, lastTwoTimesDiff now lcdt $ snd x)) $
+      M.toList qLastTwoRight
     [qLastTwoRight, qLastOneRight, qEverAsked, qNeverAsked] = 
       mapMultiPartition [lastTwoRight, lastOneRight, everAsked] okQHists
     okQHists :: M.Map Que ([QHist], (Int, Ans))
     okQHists = 
       M.filter (\ (h, _) -> and $ 
         map ((> 2 * 60 * 60 * pSecInSec) . timePDiff now . fst) h) .
-      M.map (first sort) $
+      M.map (first $ sortBy (flip compare)) $
       M.differenceWith (\ (_, (n, a)) h -> Just (h, (n, a)))
         (M.fromList $ zipWith (\ n (q, a) -> (q, ([], (n, a)))) [1 ..] qnas)
         (M.fromListWith (++) $ map (second (:[])) qSetHistory)
@@ -179,9 +175,10 @@ recordQ answerer qSelect askMethod qSet q (TOD tSs tSp, TOD tAs tAp, b) = do
     \question_select_method, question_sub_select_method, answerer) VALUES \
     \(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     [
-      toSql qSet, toSql q, toSql b, SqlInteger tSs, 
-      SqlInteger $ tSp `div` 1000, SqlInteger tAs, 
-      SqlInteger $ tAp `div` 1000, toSql $ dbStr askMethod, 
+      toSql qSet, toSql q, toSql b, 
+      SqlInteger tSs, SqlInteger $ tSp `div` 1000, 
+      SqlInteger tAs, SqlInteger $ tAp `div` 1000, 
+      toSql $ dbStr askMethod, 
       toSql $ dbStr qSelect, toSql answerer
       ]
   disconnect conn
@@ -195,7 +192,9 @@ askQs answerer askMethod qSelect qqs@(qSet, qnas) comm = do
     Right q -> do
       (tS, tA, b, thenQuit) <- askQ q comm
       io $ recordQ answerer qSelect askMethod qSet (fst q) (tS, tA, b)
-      unless thenQuit $ askQs answerer askMethod qSelect qqs comm
+      unless thenQuit $ do
+        io clrScr
+        askQs answerer askMethod qSelect qqs comm
 
 readQ :: String -> Either String (Maybe Qna)
 readQ s =
@@ -248,24 +247,25 @@ procOpt s (a, m, q, n) = case s of
   FMaxLine n' -> (a, m, q, Just $ read n')
 
 main :: IO ()
-main = runInputT defaultSettings $ do
+main = runInputT (Settings noCompletion Nothing False) $ do
   args <- io getArgs
   let
     header = "Usage:"
     (opts, qnaFNs) = case getOpt Permute options args of
       (o, n, []) -> (o, n)
       (_, _, errs) -> error $ concat errs ++ usageInfo header options
-    -- currently must specify exactly one mem file
-    [qnaFN, comm] = if length qnaFNs == 1 then qnaFNs ++ ["false"] else qnaFNs
     (answerer, askMethod, qSelect, maxLineMby) =
       foldr procOpt ("", QSLastCorrectDeltaTimes 2, QNSRandom, Nothing) opts
-  qnaF <- io $ openFile qnaFN ReadMode
-  c <- io $ hGetContents qnaF
-  let
-    ls = case maxLineMby of
-      Nothing -> lines c
-      Just maxLine -> take maxLine $ lines c
-  case readQs $ ls of
-    Left e -> io . putStrLnF $ "error parsing " ++ qnaFN ++ ":" ++ e
-    Right r -> askQs answerer askMethod qSelect r comm
+    maxLineF = case maxLineMby of
+      Nothing -> id 
+      Just maxLine -> take maxLine
+  forM_ qnaFNs $ \ qnaFN -> do
+    qnaF <- io $ openFile qnaFN ReadMode
+    c <- io $ hGetContents qnaF
+    case readQs . maxLineF $ lines c of
+      Left e -> io . putStrLnF $ "error parsing " ++ qnaFN ++ ":" ++ e
+      Right r -> do
+        io $ clrScr
+        io . putStrLn $ fst r
+        askQs answerer askMethod qSelect r "false"
 
