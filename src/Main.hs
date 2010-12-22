@@ -63,7 +63,7 @@ data Flag = FUser String | FQSelect String | FQNewSelect String |
 putStrLnF :: String -> IO ()
 putStrLnF s = putStrLn s >> hFlush stdout
 
-askQ :: Qna -> String -> InputT IO (ClockTime, ClockTime, Bool, Bool)
+askQ :: Qna -> Maybe String -> InputT IO (ClockTime, ClockTime, Bool, Bool)
 askQ (q, a) comm = do
   io $ putStrLnF q
   tS <- io getClockTime
@@ -81,9 +81,10 @@ askQ (q, a) comm = do
   -}
   io . when (r == a) $ putStrLn "matches"
   io . putStrLnF $ "\n" ++ a
-  (pI, pO, pE, pH) <- io $ SP.runInteractiveCommand (comm ++ " " ++ q)
-  pC <- io $ hGetContents pO
-  io $ putStr pC
+  flip (maybe (return ())) comm $ \ c -> do
+    (_, pO, _, _) <- io . SP.runInteractiveCommand $ c ++ " " ++ q
+    pC <- io $ hGetContents pO
+    io $ putStr pC
   io $ putStrLnF "\nCorrect (enter for yes, q for yes and quit, else for no)?"
   c <- fromMaybe "" <$> getInputLine ""
   return (tS, tA, c == "" || c == "q", c == "q")
@@ -183,7 +184,7 @@ recordQ answerer qSelect askMethod qSet q (TOD tSs tSp, TOD tAs tAp, b) = do
       ]
   disconnect conn
 
-askQs :: String -> QSelect -> QNewSelect -> (String, [Qna]) -> String -> 
+askQs :: String -> QSelect -> QNewSelect -> (String, [Qna]) -> Maybe String -> 
   InputT IO ()
 askQs answerer askMethod qSelect qqs@(qSet, qnas) comm = do
   qOrErr <- io $ doQSelect askMethod qSelect qqs
@@ -267,5 +268,5 @@ main = runInputT (Settings noCompletion Nothing False) $ do
       Right r -> do
         io $ clrScr
         io . putStrLn $ fst r
-        askQs answerer askMethod qSelect r "false"
+        askQs answerer askMethod qSelect r Nothing
 
