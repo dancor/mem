@@ -58,7 +58,9 @@ instance DbStr QNewSelect where
   dbStr QNSInitial = "initial"
 
 data Flag = FUser String | FQSelect String | FQNewSelect String | 
-  FMaxLine String
+  FMaxLine String | FMinTimeSinceLastSeen String
+
+type OptVals = (String, QSelect, QNewSelect, Maybe Int, Int)
 
 putStrLnF :: String -> IO ()
 putStrLnF s = putStrLn s >> hFlush stdout
@@ -116,9 +118,10 @@ mapMultiPartition (p:ps) m = t : mapMultiPartition ps f where
   (t, f) = M.partition p m
 mapMultiPartition _ m = [m]
 
-doQSelect :: QSelect -> QNewSelect -> (String, [Qna]) -> IO (Either String Qna)
-doQSelect QSRandom _ (_, qnas) = Right <$> evalRandIO (choice qnas)
-doQSelect (QSLastCorrectDeltaTimes lcdt) qNewSelect (qSet, qnas) = 
+doQSelect :: Int -> QSelect -> QNewSelect -> (String, [Qna]) -> IO (Either String Qna)
+-- should QSRandom respect minTimeSinceLastSeen as well?
+doQSelect _ QSRandom _ (_, qnas) = Right <$> evalRandIO (choice qnas)
+doQSelect minTimeSinceLastSeen (QSLastCorrectDeltaTimes lcdt) qNewSelect (qSet, qnas) = 
   liftM2 f (getQSetHistory qSet) getClockTime >>= evalRandIO where
   f qSetHistory now = 
     head . (\ nev -> map (Right . second (snd . snd)) (qLastTwoRightReady ++
@@ -136,8 +139,9 @@ doQSelect (QSLastCorrectDeltaTimes lcdt) qNewSelect (qSet, qnas) =
       mapMultiPartition [lastTwoRight, lastOneRight, everAsked] okQHists
     okQHists :: M.Map Que ([QHist], (Int, Ans))
     okQHists = 
-      M.filter (\ (h, _) -> and $ 
-        map ((> 2 * 60 * 60 * pSecInSec) . timePDiff now . fst) h) .
+      M.filter (\ (h, _) -> and $ map 
+        ((> fromIntegral minTimeSinceLastSeen * pSecInSec) . timePDiff now . 
+        fst) h) .
       M.map (first $ sortBy (flip compare)) $
       M.differenceWith (\ (_, (n, a)) h -> Just (h, (n, a)))
         (M.fromList $ zipWith (\ n (q, a) -> (q, ([], (n, a)))) [1 ..] qnas)
@@ -184,10 +188,10 @@ recordQ answerer qSelect askMethod qSet q (TOD tSs tSp, TOD tAs tAp, b) = do
       ]
   disconnect conn
 
-askQs :: String -> QSelect -> QNewSelect -> (String, [Qna]) -> Maybe String -> 
-  InputT IO ()
-askQs answerer askMethod qSelect qqs@(qSet, qnas) comm = do
-  qOrErr <- io $ doQSelect askMethod qSelect qqs
+askQs :: String -> Int -> QSelect -> QNewSelect -> (String, [Qna]) -> 
+  Maybe String -> InputT IO ()
+askQs answerer minTimeSinceLastSeen askMethod qSelect qqs@(qSet, qnas) comm = do
+  qOrErr <- io $ doQSelect minTimeSinceLastSeen askMethod qSelect qqs
   case qOrErr of
     Left e -> io $ putStrLnF e
     Right q -> do
@@ -195,7 +199,7 @@ askQs answerer askMethod qSelect qqs@(qSet, qnas) comm = do
       io $ recordQ answerer qSelect askMethod qSet (fst q) (tS, tA, b)
       unless thenQuit $ do
         io clrScr
-        askQs answerer askMethod qSelect qqs comm
+        askQs answerer minTimeSinceLastSeen askMethod qSelect qqs comm
 
 readQ :: String -> Either String (Maybe Qna)
 readQ s =
@@ -226,26 +230,29 @@ readQs s = if length s >= 1 && isPrefixOf qSetPrefix (head s)
 
 options :: [OptDescr Flag]
 options = [
-  Option ['u'] ["user"] (ReqArg FUser "USER")  "user name",
-  Option ['a'] ["askmethod"] (ReqArg FQSelect "r|d")
+  Option "u" ["user"] (ReqArg FUser "USER") "user name",
+  Option "a" ["askmethod"] (ReqArg FQSelect "r|d")
     "askmethod: random or doubling",
-  Option ['q'] ["qselect"] (ReqArg FQNewSelect "r|i")
+  Option "q" ["qselect"] (ReqArg FQNewSelect "r|i")
     "qselect: random or initial",
-  Option ['h'] ["max"] (ReqArg FMaxLine "N")  "maximum line number"]
-type OptVals = (String, QSelect, QNewSelect, Maybe Int)
+  Option "h" ["max"] (ReqArg FMaxLine "N") "maximum line number",
+  Option "t" ["min-time-since-last-seen"] (ReqArg FMinTimeSinceLastSeen "SECS")
+    "don't show questions seen within this many seconds ago (default 7200)"
+  ]
 
 procOpt :: Flag -> OptVals -> OptVals
-procOpt s (a, m, q, n) = case s of
-  FUser answerer -> (answerer, m, q, n)
+procOpt s (a, m, q, n, t) = case s of
+  FUser answerer -> (answerer, m, q, n, t)
   FQSelect meth -> case meth of
-    "r" -> (a, QSRandom, q, n)
-    "d" -> (a, QSLastCorrectDeltaTimes 2, q, n)
+    "r" -> (a, QSRandom, q, n, t)
+    "d" -> (a, QSLastCorrectDeltaTimes 2, q, n, t)
     _ -> error "not a valid askmethod"
   FQNewSelect qnas -> case qnas of
-    "r" -> (a, m, QNSRandom, n)
-    "i" -> (a, m, QNSInitial, n)
+    "r" -> (a, m, QNSRandom, n, t)
+    "i" -> (a, m, QNSInitial, n, t)
     _ -> error "not a valid qselect"
-  FMaxLine n' -> (a, m, q, Just $ read n')
+  FMaxLine n' -> (a, m, q, Just $ read n', t)
+  FMinTimeSinceLastSeen t' -> (a, m, q, n, read t')
 
 main :: IO ()
 main = runInputT (Settings noCompletion Nothing False) $ do
@@ -255,8 +262,8 @@ main = runInputT (Settings noCompletion Nothing False) $ do
     (opts, qnaFNs) = case getOpt Permute options args of
       (o, n, []) -> (o, n)
       (_, _, errs) -> error $ concat errs ++ usageInfo header options
-    (answerer, askMethod, qSelect, maxLineMby) =
-      foldr procOpt ("", QSLastCorrectDeltaTimes 2, QNSRandom, Nothing) opts
+    (answerer, askMethod, qSelect, maxLineMby, minTimeSinceLastSeen) = foldr 
+      procOpt ("", QSLastCorrectDeltaTimes 2, QNSRandom, Nothing, 7200) opts
     maxLineF = case maxLineMby of
       Nothing -> id 
       Just maxLine -> take maxLine
@@ -268,5 +275,5 @@ main = runInputT (Settings noCompletion Nothing False) $ do
       Right r -> do
         io $ clrScr
         io . putStrLn $ fst r
-        askQs answerer askMethod qSelect r Nothing
+        askQs answerer minTimeSinceLastSeen askMethod qSelect r Nothing
 
