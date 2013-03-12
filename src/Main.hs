@@ -21,7 +21,6 @@ import Data.Ord
 import Database.HDBC
 import Database.HDBC.PostgreSQL
 import FUtil
-import System
 import System.Console.GetOpt
 import System.Console.Haskeline
 import System.Environment

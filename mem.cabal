@@ -5,7 +5,7 @@ license-file:   LICENSE
 author:         Daniel Corson
 synopsis:       memorization program
 build-type:     Simple
-build-depends:  base >= 4, haskell98,
+build-depends:  base >= 4,
                 haskeline, HDBC, HDBC-postgresql, old-time, random,
                 process, containers, FUtil, mtl, MonadRandom, HSH, bytestring,
                 parsec, time
