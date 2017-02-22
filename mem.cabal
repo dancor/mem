@@ -5,10 +5,23 @@ license-file:   LICENSE
 author:         Daniel Corson
 synopsis:       memorization program
 build-type:     Simple
-build-depends:  base >= 4,
-                haskeline, HDBC, HDBC-postgresql, old-time, random,
-                process, containers, FUtil, mtl, MonadRandom, HSH, bytestring,
-                parsec, time
+build-depends:
+    base
+  , bytestring
+  , containers
+  , directory
+  , filepath
+  , haskeline
+  , HDBC
+  , HDBC-sqlite3
+  , HSH
+  , MonadRandom
+  , mtl
+  , old-time
+  , parsec
+  , process
+  , random
+  , time
 
 executable:     mem
 main-is:        Main.hs

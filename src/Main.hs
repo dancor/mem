@@ -19,11 +19,12 @@ import Data.List
 import Data.Maybe
 import Data.Ord
 import Database.HDBC
-import Database.HDBC.PostgreSQL
-import FUtil
+import Database.HDBC.Sqlite3
 import System.Console.GetOpt
 import System.Console.Haskeline
+import System.Directory
 import System.Environment
+import System.FilePath
 import System.IO
 import System.Random
 import System.Time
@@ -66,10 +67,10 @@ putStrLnF s = putStrLn s >> hFlush stdout
 
 askQ :: Qna -> Maybe String -> InputT IO (ClockTime, ClockTime, Bool, Bool)
 askQ (q, a) comm = do
-  io $ putStrLnF q
-  tS <- io getClockTime
+  liftIO $ putStrLnF q
+  tS <- liftIO getClockTime
   r <- fromMaybe "" <$> getInputLine ""
-  tA <- io getClockTime
+  tA <- liftIO getClockTime
   {- check mode should be an option (but not default?)
   if r == a
     then do
@@ -80,22 +81,40 @@ askQ (q, a) comm = do
       putStrLnF a
       return False
   -}
-  io . when (r == a) $ putStrLn "matches"
-  io . putStrLnF $ "\n" ++ a
+  liftIO . when (r == a) $ putStrLn "matches"
+  liftIO . putStrLnF $ "\n" ++ a
   flip (maybe (return ())) comm $ \ c -> do
-    (_, pO, _, _) <- io . SP.runInteractiveCommand $ c ++ " " ++ q
-    pC <- io $ hGetContents pO
-    io $ putStr pC
-  io $ putStrLnF "\nCorrect (enter for yes, q for yes and quit, else for no)?"
+    (_, pO, _, _) <- liftIO . SP.runInteractiveCommand $ c ++ " " ++ q
+    pC <- liftIO $ hGetContents pO
+    liftIO $ putStr pC
+  liftIO $ putStrLnF "\nCorrect (enter for yes, q for yes and quit, else for no)?"
   c <- fromMaybe "" <$> getInputLine ""
   return (tS, tA, c == "" || c == "q", c == "q")
 
-cPS :: IO Connection
-cPS = handleSqlError $ connectPostgreSQL "dbname=memorization"
+getConnection :: IO Connection
+getConnection = do
+  home <- getHomeDirectory
+  let sqlFile = home </> ".config" </> "mem"
+  dbExisted <- doesFileExist sqlFile
+  createDirectoryIfMissing True (home </> ".config")
+  conn <- handleSqlError $ connectSqlite3 sqlFile
+  unless dbExisted . withTransaction conn $ \c -> run c (
+    "CREATE TABLE ask_log (" ++
+    "question VARCHAR(255), " ++
+    "got_correct BOOL, " ++
+    "asked_time INT, " ++
+    "asked_time_nanosec INT, " ++
+    "answered_time INT, " ++
+    "answered_time_nanosec INT, " ++
+    "question_select_method VARCHAR(64), " ++
+    "question_sub_select_method VARCHAR(64), " ++
+    "question_set VARCHAR(255), " ++
+    "answerer VARCHAR(64))") [] >> return ()
+  return conn
 
 getQSetHistory :: String -> IO [(Que, QHist)]
 getQSetHistory qSet = do
-  conn <- cPS
+  conn <- getConnection
   ret <- withTransaction conn $ \ c -> quickQuery c
     "SELECT question, got_correct, asked_time, asked_time_nanosec, \
     \answered_time, answered_time_nanosec, question_select_method FROM \
@@ -119,7 +138,7 @@ mapMultiPartition _ m = [m]
 
 doQSelect :: Int -> QSelect -> QNewSelect -> (String, [Qna]) -> IO (Either String Qna)
 -- should QSRandom respect minTimeSinceLastSeen as well?
-doQSelect _ QSRandom _ (_, qnas) = Right <$> evalRandIO (choice qnas)
+doQSelect _ QSRandom _ (_, qnas) = Right <$> evalRandIO (randChoice qnas)
 doQSelect minTimeSinceLastSeen (QSLastCorrectDeltaTimes lcdt) qNewSelect (qSet, qnas) = 
   liftM2 f (getQSetHistory qSet) getClockTime >>= evalRandIO where
   f qSetHistory now = 
@@ -149,7 +168,7 @@ doQSelect minTimeSinceLastSeen (QSLastCorrectDeltaTimes lcdt) qNewSelect (qSet, 
       Rand StdGen [(Que, ([QHist], (Int, Ans)))]
     qnsF = case qNewSelect of
       QNSInitial -> return . sortBy (comparing $ fst . snd . snd)
-      QNSRandom -> shuffle
+      QNSRandom -> randShuffle
     partyOver = Left $
       "All questions correct or seen too recently!  Mem something else for " ++
       "a bit.."
@@ -172,7 +191,7 @@ everAsked q = length (fst q) > 0
 recordQ :: String -> QNewSelect -> QSelect -> String -> String -> 
   (ClockTime, ClockTime, Bool) -> IO ()
 recordQ answerer qSelect askMethod qSet q (TOD tSs tSp, TOD tAs tAp, b) = do
-  conn <- cPS
+  conn <- getConnection
   ret <- withTransaction conn $ \ c -> run c 
     "INSERT INTO ask_log (question_set, question, got_correct, asked_time, \
     \asked_time_nanosec, answered_time, answered_time_nanosec, \
@@ -187,17 +206,42 @@ recordQ answerer qSelect askMethod qSet q (TOD tSs tSp, TOD tAs tAp, b) = do
       ]
   disconnect conn
 
+clrScr :: IO ()
+clrScr = SP.system "clear" >> return ()
+
+pSecInSec :: Integer
+pSecInSec = 1000 ^ 4
+
+-- substitute a sublist (e.g. string replace)
+subst :: Eq a => [a] -> [a] -> [a] -> [a]
+subst _ _ [] = []
+subst from to xs@(a:as) =
+  if from `isPrefixOf` xs
+    then to ++ subst from to (drop (length from) xs)
+    else a : subst from to as
+
+sublistIx :: Eq a => [a] -> [a] -> Maybe Int
+sublistIx subl l = findIndex id $ map (subl `isPrefixOf`) (tails l)
+
+randShuffle :: (MonadRandom m) => [b] -> m [b]
+randShuffle l = do
+  rndInts <- getRandoms
+  return . map snd . sortBy (compare `on` fst) $ zip (rndInts :: [Int]) l
+
+randChoice :: (MonadRandom m) => [b] -> m b
+randChoice l = randShuffle l >>= return . head
+
 askQs :: String -> Int -> QSelect -> QNewSelect -> (String, [Qna]) -> 
   Maybe String -> InputT IO ()
 askQs answerer minTimeSinceLastSeen askMethod qSelect qqs@(qSet, qnas) comm = do
-  qOrErr <- io $ doQSelect minTimeSinceLastSeen askMethod qSelect qqs
+  qOrErr <- liftIO $ doQSelect minTimeSinceLastSeen askMethod qSelect qqs
   case qOrErr of
-    Left e -> io $ putStrLnF e
+    Left e -> liftIO $ putStrLnF e
     Right q -> do
       (tS, tA, b, thenQuit) <- askQ q comm
-      io $ recordQ answerer qSelect askMethod qSet (fst q) (tS, tA, b)
+      liftIO $ recordQ answerer qSelect askMethod qSet (fst q) (tS, tA, b)
       unless thenQuit $ do
-        io clrScr
+        liftIO clrScr
         askQs answerer minTimeSinceLastSeen askMethod qSelect qqs comm
 
 readQ :: String -> Either String (Maybe Qna)
@@ -255,7 +299,7 @@ procOpt s (a, m, q, n, t) = case s of
 
 main :: IO ()
 main = runInputT (Settings noCompletion Nothing False) $ do
-  args <- io getArgs
+  args <- liftIO getArgs
   let
     header = "Usage:"
     (opts, qnaFNs) = case getOpt Permute options args of
@@ -267,12 +311,12 @@ main = runInputT (Settings noCompletion Nothing False) $ do
       Nothing -> id 
       Just maxLine -> take maxLine
   forM_ qnaFNs $ \ qnaFN -> do
-    qnaF <- io $ openFile qnaFN ReadMode
-    c <- io $ hGetContents qnaF
+    qnaF <- liftIO $ openFile qnaFN ReadMode
+    c <- liftIO $ hGetContents qnaF
     case readQs . maxLineF $ lines c of
-      Left e -> io . putStrLnF $ "error parsing " ++ qnaFN ++ ":" ++ e
+      Left e -> liftIO . putStrLnF $ "error parsing " ++ qnaFN ++ ":" ++ e
       Right r -> do
-        io $ clrScr
-        io . putStrLn $ fst r
+        liftIO $ clrScr
+        liftIO . putStrLn $ fst r
         askQs answerer minTimeSinceLastSeen askMethod qSelect r Nothing
 

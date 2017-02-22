@@ -1,3 +1,0 @@
-#!/bin/sh
-echo 'create database memorization;' | psql template1
-echo 'create table ask_log (question varchar(255), got_correct bool, asked_time int, asked_time_nanosec int, answered_time int, answered_time_nanosec int, question_select_method varchar(64), question_sub_select_method varchar(64), question_set varchar(255), answerer varchar(64));' | psql memorization
