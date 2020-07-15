@@ -14,7 +14,6 @@ build-depends:
   , haskeline
   , HDBC
   , HDBC-sqlite3
-  , HSH
   , MonadRandom
   , mtl
   , old-time
