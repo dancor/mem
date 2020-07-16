@@ -8,16 +8,7 @@ build-type:     Simple
 build-depends:
     base
   , bytestring
---, containers
   , directory
---, filepath
---, haskeline
---, HDBC
---, HDBC-sqlite3
---, MonadRandom
---, mtl
---, old-time
---, parsec
   , process
   , random
   , serialise
