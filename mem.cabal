@@ -8,19 +8,22 @@ build-type:     Simple
 build-depends:
     base
   , bytestring
-  , containers
-  , directory
-  , filepath
-  , haskeline
-  , HDBC
-  , HDBC-sqlite3
-  , MonadRandom
-  , mtl
-  , old-time
-  , parsec
+--, containers
+--, directory
+--, filepath
+--, haskeline
+--, HDBC
+--, HDBC-sqlite3
+--, MonadRandom
+--, mtl
+--, old-time
+--, parsec
   , process
   , random
+  , serialise
+  , text
   , time
+  , unordered-containers
 
 executable:     mem
 main-is:        Main.hs
