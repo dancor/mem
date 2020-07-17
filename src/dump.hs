@@ -34,11 +34,11 @@ type Sched = HashMap Q QSched
 getMyTime :: IO MyTime
 getMyTime = realToFrac <$> getPOSIXTime
 
-showSecs s | s < 0 = '-' : showSecs (negate s)
-           | s < 60 = show (round s) ++ "s"
-showSecs s | s < 3600 = show (round $ s / 60) ++ "m"
-showSecs s | s < 24 * 3600 = show (round $ s / 3600) ++ "h"
-showSecs s | otherwise = show (round $ s / 3600 / 24) ++ "d"
+showSecs s | s < 0         = '-' : showSecs (negate s)
+           | s < 60        = show (round s)               ++ "s"
+           | s < 3600      = show (round $ s / 60)        ++ "m"
+           | s < 24 * 3600 = show (round $ s / 3600)      ++ "h"
+           | otherwise     = show (round $ s / 3600 / 24) ++ "d"
 
 mainOnArgs args = do
     case args of
