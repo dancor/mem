@@ -61,7 +61,7 @@ asks schedF sched qnas = do
             partition (isJust . fst) .
             map (\qna@(q, _) -> (q `HM.lookup` sched, qna)) $ HM.toList qnas
         (ready, notReady) = partition ((< t) . qSched . fst) seen
-        notReadyLastWrong = filter (not . qLastSawWasCorrect . fst) seen
+        notReadyLastWrong = filter (not . qLastSawWasCorrect . fst) notReady
         askOldest = ask . first Just . minimumBy (comparing $ qSched . fst)
         randEl l = (l !!) <$> randomRIO (0, length l - 1)
         ask (schedMb, qna@(q, a)) = do

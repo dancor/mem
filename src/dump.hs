@@ -47,8 +47,8 @@ mainOnArgs args = do
         t <- getMyTime
         print t
         let info = map (\(q, sched) ->
-                (qSched sched - t, q)) (HM.toList (a :: Sched))
-        mapM_ (\(s, q) -> T.putStrLn $ T.pack (showSecs s) <> "\t" <> q) $
+                (qSched sched - t, (qLastSawWasCorrect sched, q))) (HM.toList (a :: Sched))
+        mapM_ (\(s, (wasCorrect, q)) -> T.putStrLn $ T.pack (showSecs s) <> "\t" <> T.pack (show wasCorrect) <> "\t" <> q) $
             sortBy (comparing fst) info
       _ -> error "Usage: dump <schedule-file>"
 
