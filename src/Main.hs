@@ -17,6 +17,7 @@ import Data.Time.Clock.POSIX (getPOSIXTime)
 import GHC.Generics (Generic)
 import System.Directory (doesFileExist)
 import System.Environment (getArgs)
+import System.IO
 import System.Process (system)
 import System.Random (randomRIO)
 
@@ -42,9 +43,15 @@ getMyTime :: IO MyTime
 getMyTime = realToFrac <$> getPOSIXTime
 
 procQna :: Text -> (Text, Text)
-procQna l = case T.splitOn "|" l of
-  [q, a] -> (q, a)
-  _ -> error $ "Could not process question-and-answer line: " ++ show l
+procQna l = case T.break (== '|') l of
+  (_, "") -> error $ "Could not process question-and-answer line: " ++ show l
+  (q, sepA) -> (q, T.tail sepA)
+
+-- Clear any previous input, then get a line.
+myGetLine = do
+  r <- hReady stdin
+  if r then hGetChar stdin >> myGetLine
+    else getLine
 
 asks :: FilePath -> Sched -> HashMap Q A -> IO ()
 asks schedF sched qnas = do
@@ -54,14 +61,15 @@ asks schedF sched qnas = do
             partition (isJust . fst) .
             map (\qna@(q, _) -> (q `HM.lookup` sched, qna)) $ HM.toList qnas
         (ready, notReady) = partition ((< t) . qSched . fst) seen
+        notReadyLastWrong = filter (not . qLastSawWasCorrect . fst) seen
         askOldest = ask . first Just . minimumBy (comparing $ qSched . fst)
         randEl l = (l !!) <$> randomRIO (0, length l - 1)
         ask (schedMb, qna@(q, a)) = do
             T.putStrLn $ q <> "\t\t" <> T.intercalate ":" (map (T.pack . show)
-                [length ready, length unseen, length notReady])
-            _ <- getLine
+                [length ready, length unseen, length notReadyLastWrong])
+            _ <- myGetLine
             T.putStrLn a
-            r <- getLine
+            r <- myGetLine
             let (correct, quit) = case r of
                   ""  -> (True , False)
                   "q" -> (True , True )
@@ -75,26 +83,25 @@ asks schedF sched qnas = do
                 sched2 = HM.insert q (QSched nextTime t2 correct) sched
             writeFileSerialise schedF sched2
             unless quit $ asks schedF sched2 qnas
-    case (ready, unseen, notReady) of 
+    case (ready, unseen, notReadyLastWrong) of 
       ([], [], []) -> T.putStrLn "Done for now!"
-      ([], [], _ ) -> askOldest notReady
+      ([], [], _ ) -> askOldest notReadyLastWrong
       ([], _ , _ ) -> randEl unseen >>= ask . (,) Nothing
       _            -> askOldest ready
 
-mainOnArgs args = do
-    case args of
-      [schedF, qnaF] -> do
-        fExists <- doesFileExist schedF
-        unless fExists $ writeFileSerialise schedF (HM.empty :: Sched)
-        a <- readFileDeserialise schedF
-        b <- HM.fromList . map procQna . filter (not . ("#" `T.isPrefixOf`)) .
-            T.lines <$> T.readFile qnaF
-        asks schedF a b
-        {-
-        liftM2 (asks schedF) (readFileDeserialise schedF) $
-            HM.fromList . map procQna . filter (not . ("#" `T.isPrefixOf`)) .
-            T.lines <$> T.readFile qnaF
-        -}
-      _ -> error "Usage: mem <schedule-file> <question-and-answer-file>"
+mainOnArgs args = case args of
+  schedF:qnaFs -> do
+    fExists <- doesFileExist schedF
+    unless fExists $ writeFileSerialise schedF (HM.empty :: Sched)
+    a <- readFileDeserialise schedF
+    b <- HM.fromList . map procQna . filter (not . ("#" `T.isPrefixOf`)) .
+        concatMap T.lines <$> mapM T.readFile qnaFs
+    asks schedF a b
+    {- Why did this do nothing and just exit?:
+    liftM2 (asks schedF) (readFileDeserialise schedF) $
+        HM.fromList . map procQna . filter (not . ("#" `T.isPrefixOf`)) .
+        T.lines <$> T.readFile qnaF
+    -}
+  _ -> error $ "Usage: mem <schedule-file> <question-and-answer-files>:" ++ show args
 
 main = getArgs >>= mainOnArgs 
