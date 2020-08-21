@@ -68,7 +68,7 @@ asks schedF sched qnas = do
             T.putStrLn $ q <> "\t\t" <> T.intercalate ":" (map (T.pack . show)
                 [length ready, length unseen, length notReadyLastWrong])
             _ <- myGetLine
-            T.putStrLn a
+            T.putStrLn $ T.replace "<br>" "\n" $ T.replace "  " "\n" a
             r <- myGetLine
             let (correct, quit) = case r of
                   ""  -> (True , False)
