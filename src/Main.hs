@@ -4,7 +4,8 @@
 import Codec.Serialise (Serialise, readFileDeserialise, writeFileSerialise)
 import Codec.Serialise.IO (readFileDeserialise, writeFileSerialise)
 import Control.Arrow (first, second)
-import Control.Monad (liftM2, unless)
+import Control.Concurrent (threadDelay)
+import Control.Monad (liftM2, unless, when)
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM
 import Data.List (minimumBy, partition)
@@ -47,11 +48,13 @@ procQna l = case T.break (== '|') l of
   (_, "") -> error $ "Could not process question-and-answer line: " ++ show l
   (q, sepA) -> (q, T.tail sepA)
 
+clearInput = hReady stdin >>= \r -> when r (hGetChar stdin >> clearInput)
+
 -- Clear any previous input, then get a line.
 myGetLine = do
-  r <- hReady stdin
-  if r then hGetChar stdin >> myGetLine
-    else getLine
+  threadDelay 500000
+  clearInput
+  getLine
 
 asks :: FilePath -> Sched -> HashMap Q A -> IO ()
 asks schedF sched qnas = do
