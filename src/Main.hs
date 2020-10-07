@@ -52,7 +52,7 @@ clearInput = hReady stdin >>= \r -> when r (hGetChar stdin >> clearInput)
 
 -- Clear any previous input, then get a line.
 myGetLine = do
-  threadDelay 500000
+  threadDelay 200000
   clearInput
   getLine
 
