@@ -1,0 +1,8 @@
+Imperfect Tense one-liner|Stem+ X2:áv,í  Xa Xas Xa  X2amos X2eis Xam
+Preterite Tense one-liner|Stem+ X:e. Y2:áei Z:oei  Xi Yste Zu  Y2mos Ystes Yram
+Pluperfect Tense one-liner|Inf+  a as a  amos eis am
+Future Tense one-liner|Inf+  ei ás á  emos eis ão
+Conditional Tense one-liner|Inf+  ia ias ia  íamos íeis iam
+Subjunctive Present Tense one-liner|Pres1s-o+ X:ea  X Xs X  Xmos Xis Xm
+Subjunctive Imperfect Tense one-liner|Pret3p-4+ X2:áêí  Xsse Xsses Xsse  X2ssemos X2sseis Xssem
+Subjunctive Future Tense one-liner|Pret3p-2+  . es .  mos des em
