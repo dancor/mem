@@ -70,8 +70,9 @@ asks schedF sched qnas = do
         ask (schedMb, qna@(q, a)) = do
             T.putStrLn $ q <> "\t\t" <> T.intercalate ":" (map (T.pack . show)
                 [length ready, length unseen, length notReadyLastWrong])
-            _ <- myGetLine
-            T.putStrLn $ T.replace "<br>" "\n" $ T.replace "  " "\n" a
+            aTry <- T.pack <$> myGetLine
+            T.putStrLn $ T.replace "<br>" "\n" $ T.replace "   " "\n" a
+            T.putStrLn $ if aTry == a then "Correct!" else "DIDN'T MATCH."
             r <- myGetLine
             let (correct, quit) = case r of
                   ""  -> (True , False)
@@ -107,4 +108,4 @@ mainOnArgs args = case args of
     -}
   _ -> error $ "Usage: mem <schedule-file> <question-and-answer-files>:" ++ show args
 
-main = getArgs >>= mainOnArgs 
+main = hSetEncoding stdin utf8 >> getArgs >>= mainOnArgs 
