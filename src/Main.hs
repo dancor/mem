@@ -53,18 +53,6 @@ procQna l = case T.break (== '|') l of
   (_, "") -> error $ "Could not process question-and-answer line: " ++ show l
   (q, sepA) -> (q, T.tail sepA)
 
-clearInput = hReady stdin >>= \r -> when r (hGetChar stdin >> clearInput)
-
-{-
--- Clear any previous input, then get a line.
-myGetLine = do
-  threadDelay 200000
-  clearInput
-  getLine
-
-putTe
--}
-
 asks :: FilePath -> Sched -> HashMap Q A -> InputT IO ()
 asks schedF sched qnas = do
     io $ system "clear"
@@ -103,6 +91,7 @@ asks schedF sched qnas = do
       ([], _ , _ ) -> io (randEl unseen) >>= ask . (,) Nothing
       _            -> askOldest ready
 
+mainOnArgs :: [String] -> IO ()
 mainOnArgs args = case args of
   schedF:qnaFs -> do
     fExists <- doesFileExist schedF
@@ -118,5 +107,5 @@ mainOnArgs args = case args of
     -}
   _ -> error $ "Usage: mem <schedule-file> <question-and-answer-files>:" ++ show args
 
---main = hSetEncoding stdin utf8 >> getArgs >>= mainOnArgs 
+main :: IO ()
 main = getArgs >>= mainOnArgs 
