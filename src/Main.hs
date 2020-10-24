@@ -6,16 +6,19 @@ import Codec.Serialise.IO (readFileDeserialise, writeFileSerialise)
 import Control.Arrow (first, second)
 import Control.Concurrent (threadDelay)
 import Control.Monad (liftM2, unless, when)
+import Control.Monad.IO.Class (liftIO)
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM
 import Data.List (minimumBy, partition)
-import Data.Maybe (isJust, fromJust)
+import Data.Maybe (isJust, fromJust, fromMaybe)
 import Data.Ord (comparing)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import Data.Time.Clock.POSIX (getPOSIXTime)
 import GHC.Generics (Generic)
+import System.Console.Haskeline (defaultSettings, getInputLine, InputT,
+    runInputT)
 import System.Directory (doesFileExist)
 import System.Environment (getArgs)
 import System.IO
@@ -40,6 +43,8 @@ data QSched = QSched
 instance Serialise QSched
 type Sched = HashMap Q QSched
 
+io = liftIO
+
 getMyTime :: IO MyTime
 getMyTime = realToFrac <$> getPOSIXTime
 
@@ -50,16 +55,20 @@ procQna l = case T.break (== '|') l of
 
 clearInput = hReady stdin >>= \r -> when r (hGetChar stdin >> clearInput)
 
+{-
 -- Clear any previous input, then get a line.
 myGetLine = do
   threadDelay 200000
   clearInput
   getLine
 
-asks :: FilePath -> Sched -> HashMap Q A -> IO ()
+putTe
+-}
+
+asks :: FilePath -> Sched -> HashMap Q A -> InputT IO ()
 asks schedF sched qnas = do
-    system "clear"
-    t <- getMyTime
+    io $ system "clear"
+    t <- io getMyTime
     let (seen, unseen) = first (map $ first fromJust) . second (map snd) .
             partition (isJust . fst) .
             map (\qna@(q, _) -> (q `HM.lookup` sched, qna)) $ HM.toList qnas
@@ -68,29 +77,30 @@ asks schedF sched qnas = do
         askOldest = ask . first Just . minimumBy (comparing $ qSched . fst)
         randEl l = (l !!) <$> randomRIO (0, length l - 1)
         ask (schedMb, qna@(q, a)) = do
-            T.putStrLn $ q <> "\t\t" <> T.intercalate ":" (map (T.pack . show)
+            io . T.putStrLn $ q <> "\t\t" <> 
+                T.intercalate ":" (map (T.pack . show)
                 [length ready, length unseen, length notReadyLastWrong])
-            aTry <- T.pack <$> myGetLine
-            T.putStrLn $ T.replace "<br>" "\n" $ T.replace "   " "\n" a
-            T.putStrLn $ if aTry == a then "Correct!" else "DIDN'T MATCH."
-            r <- myGetLine
+            aTry <- T.pack . fromMaybe "" <$> getInputLine ""
+            io . T.putStrLn $ T.replace "<br>" "\n" $ T.replace "   " "\n" a
+            io . T.putStrLn $ if aTry == a then "Correct!" else "DIDN'T MATCH."
+            r <- fromMaybe ("" :: String) <$> getInputLine ""
             let (correct, quit) = case r of
                   ""  -> (True , False)
                   "q" -> (True , True )
                   "Q" -> (False, True )
                   _   -> (False, False)
-            t2 <- getMyTime
+            t2 <- io $ getMyTime
             let nextTime = case (correct, schedMb) of
                   (False, _) -> t2 + 5 * 60
                   (_, Just (QSched _ lastSaw True)) -> t2 + 2 * (t2 - lastSaw)
                   _ -> t2 + 8 * 3600
                 sched2 = HM.insert q (QSched nextTime t2 correct) sched
-            writeFileSerialise schedF sched2
+            io $ writeFileSerialise schedF sched2
             unless quit $ asks schedF sched2 qnas
     case (ready, unseen, notReadyLastWrong) of 
-      ([], [], []) -> T.putStrLn "Done for now!"
+      ([], [], []) -> io $ T.putStrLn "Done for now!"
       ([], [], _ ) -> askOldest notReadyLastWrong
-      ([], _ , _ ) -> randEl unseen >>= ask . (,) Nothing
+      ([], _ , _ ) -> io (randEl unseen) >>= ask . (,) Nothing
       _            -> askOldest ready
 
 mainOnArgs args = case args of
@@ -100,7 +110,7 @@ mainOnArgs args = case args of
     a <- readFileDeserialise schedF
     b <- HM.fromList . map procQna . filter (not . ("#" `T.isPrefixOf`)) .
         concatMap T.lines <$> mapM T.readFile qnaFs
-    asks schedF a b
+    runInputT defaultSettings $ asks schedF a b
     {- Why did this do nothing and just exit?:
     liftM2 (asks schedF) (readFileDeserialise schedF) $
         HM.fromList . map procQna . filter (not . ("#" `T.isPrefixOf`)) .
@@ -108,4 +118,5 @@ mainOnArgs args = case args of
     -}
   _ -> error $ "Usage: mem <schedule-file> <question-and-answer-files>:" ++ show args
 
-main = hSetEncoding stdin utf8 >> getArgs >>= mainOnArgs 
+--main = hSetEncoding stdin utf8 >> getArgs >>= mainOnArgs 
+main = getArgs >>= mainOnArgs 
