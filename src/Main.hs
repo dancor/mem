@@ -98,7 +98,7 @@ mainOnArgs args = case args of
     unless fExists $ writeFileSerialise schedF (HM.empty :: Sched)
     a <- readFileDeserialise schedF
     b <- HM.fromList . map procQna . filter (not . ("#" `T.isPrefixOf`)) .
-        concatMap T.lines <$> mapM T.readFile qnaFs
+        filter (not . T.null) . concatMap T.lines <$> mapM T.readFile qnaFs
     runInputT defaultSettings $ asks schedF a b
     {- Why did this do nothing and just exit?:
     liftM2 (asks schedF) (readFileDeserialise schedF) $
