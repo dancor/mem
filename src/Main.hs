@@ -105,8 +105,8 @@ mainOnArgs args = case args of
     sched <- readFileDeserialise schedF
     qnaLists <- map parseQnaFile <$> mapM T.readFile qnaFs
     runInputT defaultSettings $ asks schedF sched qnaLists
-  _ -> error $ "Usage: mem <schedule-file> <question-and-answer-files>:" ++
-    show args
+  _ -> error $ "Usage: mem <schedule-file> <question-and-answer-files>\n" ++ 
+    "Args were: " ++ show args
 
 main :: IO ()
 main = getArgs >>= mainOnArgs 
