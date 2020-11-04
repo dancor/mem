@@ -59,21 +59,27 @@ parseQnaFile :: Text -> Qnas
 parseQnaFile = map parseQna . filter (not . ("#" `T.isPrefixOf`)) .
     filter (not . T.null) . T.lines
 
+partitionFstMaybe :: [(Maybe a, b)] -> ([(a, b)], [b])
+partitionFstMaybe = first (map $ first fromJust) . second (map snd) .
+    partition (isJust . fst)
+
+seenUnseen :: Sched -> [Qnas] -> ([(QSched, Qna)], [Qnas])
+seenUnseen sched = first concat . unzip .
+    map (partitionFstMaybe . map (\qna@(q,_) -> (q `HM.lookup` sched, qna)))
+
 asks :: FilePath -> Sched -> [Qnas] -> InputT IO ()
 asks schedF sched qnas = do
     io $ system "clear"
     t <- io getMyTime
-    let (seen, unseen) = first (map $ first fromJust) . second (map snd) .
-            partition (isJust . fst) .
-            map (\qna@(q, _) -> (q `HM.lookup` sched, qna)) $ concat qnas
+    let (seen, unseenByFile) = seenUnseen sched qnas
         (ready, notReady) = partition ((< t) . qSched . fst) seen
         notReadyLastWrong = filter (not . qLastSawWasCorrect . fst) notReady
         askOldest = ask . first Just . minimumBy (comparing $ qSched . fst)
         randEl l = (l !!) <$> randomRIO (0, length l - 1)
         ask (schedMb, qna@(q, a)) = do
             io . T.putStrLn $ q <> "\t\t" <> 
-                T.intercalate ":" (map (T.pack . show)
-                [length ready, length unseen, length notReadyLastWrong])
+                T.intercalate ":" (map (T.pack . show) [length ready, 
+                sum $ map length unseenByFile, length notReadyLastWrong])
             aTry <- T.pack . fromMaybe "" <$> getInputLine ""
             io . T.putStrLn $ T.replace "<br>" "\n" $ T.replace "   " "\n" a
             io . T.putStrLn $ if aTry == a then "Correct!" else "DIDN'T MATCH."
@@ -91,11 +97,11 @@ asks schedF sched qnas = do
                 sched2 = HM.insert q (QSched nextTime t2 correct) sched
             io $ writeFileSerialise schedF sched2
             unless quit $ asks schedF sched2 qnas
-    case (ready, unseen, notReadyLastWrong) of 
-      ([], [], []) -> io $ T.putStrLn "Done for now!"
-      ([], [], _ ) -> askOldest notReadyLastWrong
-      ([], _ , _ ) -> io (randEl unseen) >>= ask . (,) Nothing
-      _            -> askOldest ready
+    case (ready, filter (not . null) unseenByFile, notReadyLastWrong) of 
+      ([], [] , []) -> io $ T.putStrLn "Done for now!"
+      ([], [] , _ ) -> askOldest notReadyLastWrong
+      ([], u:_, _ ) -> io (randEl u) >>= ask . (,) Nothing
+      _             -> askOldest ready
 
 mainOnArgs :: [String] -> IO ()
 mainOnArgs args = case args of
