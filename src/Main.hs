@@ -35,6 +35,8 @@ import System.Random (randomRIO)
 type MyTime = Double
 type Q = Text
 type A = Text
+type Qna = (Q, A)
+type Qnas = [Qna]
 data QSched = QSched
   { qSched   :: MyTime
   , qLastSaw :: MyTime
@@ -48,18 +50,22 @@ io = liftIO
 getMyTime :: IO MyTime
 getMyTime = realToFrac <$> getPOSIXTime
 
-procQna :: Text -> (Text, Text)
-procQna l = case T.break (== '|') l of
-  (_, "") -> error $ "Could not process question-and-answer line: " ++ show l
+parseQna :: Text -> Qna
+parseQna l = case T.break (== '|') l of
+  (_, "") -> error $ "Could not parse question-and-answer line: " ++ show l
   (q, sepA) -> (q, T.tail sepA)
 
-asks :: FilePath -> Sched -> HashMap Q A -> InputT IO ()
+parseQnaFile :: Text -> Qnas
+parseQnaFile = map parseQna . filter (not . ("#" `T.isPrefixOf`)) .
+    filter (not . T.null) . T.lines
+
+asks :: FilePath -> Sched -> [Qnas] -> InputT IO ()
 asks schedF sched qnas = do
     io $ system "clear"
     t <- io getMyTime
     let (seen, unseen) = first (map $ first fromJust) . second (map snd) .
             partition (isJust . fst) .
-            map (\qna@(q, _) -> (q `HM.lookup` sched, qna)) $ HM.toList qnas
+            map (\qna@(q, _) -> (q `HM.lookup` sched, qna)) $ concat qnas
         (ready, notReady) = partition ((< t) . qSched . fst) seen
         notReadyLastWrong = filter (not . qLastSawWasCorrect . fst) notReady
         askOldest = ask . first Just . minimumBy (comparing $ qSched . fst)
@@ -96,16 +102,11 @@ mainOnArgs args = case args of
   schedF:qnaFs -> do
     fExists <- doesFileExist schedF
     unless fExists $ writeFileSerialise schedF (HM.empty :: Sched)
-    a <- readFileDeserialise schedF
-    b <- HM.fromList . map procQna . filter (not . ("#" `T.isPrefixOf`)) .
-        filter (not . T.null) . concatMap T.lines <$> mapM T.readFile qnaFs
-    runInputT defaultSettings $ asks schedF a b
-    {- Why did this do nothing and just exit?:
-    liftM2 (asks schedF) (readFileDeserialise schedF) $
-        HM.fromList . map procQna . filter (not . ("#" `T.isPrefixOf`)) .
-        T.lines <$> T.readFile qnaF
-    -}
-  _ -> error $ "Usage: mem <schedule-file> <question-and-answer-files>:" ++ show args
+    sched <- readFileDeserialise schedF
+    qnaLists <- map parseQnaFile <$> mapM T.readFile qnaFs
+    runInputT defaultSettings $ asks schedF sched qnaLists
+  _ -> error $ "Usage: mem <schedule-file> <question-and-answer-files>:" ++
+    show args
 
 main :: IO ()
 main = getArgs >>= mainOnArgs 
