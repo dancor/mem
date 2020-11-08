@@ -45,6 +45,7 @@ data QSched = QSched
 instance Serialise QSched
 type Sched = HashMap Q QSched
 
+io :: IO a -> InputT IO a
 io = liftIO
 
 getMyTime :: IO MyTime
@@ -67,6 +68,18 @@ seenUnseen :: Sched -> [Qnas] -> ([(QSched, Qna)], [Qnas])
 seenUnseen sched = first concat . unzip .
     map (partitionFstMaybe . map (\qna@(q,_) -> (q `HM.lookup` sched, qna)))
 
+whileM :: IO Bool -> IO () -> IO ()
+whileM t a = t >>= \r -> if r then a >> whileM t a else return ()
+
+waitWhileKeyDown :: IO ()
+waitWhileKeyDown = do
+    threadDelay 300000
+    r <- hReady stdin
+    when r $ whileM (hReady stdin) (getChar >> return ()) >> waitWhileKeyDown
+
+myGetInputLine :: InputT IO (Maybe String)
+myGetInputLine = io waitWhileKeyDown >> getInputLine ""
+
 asks :: FilePath -> Sched -> [Qnas] -> InputT IO ()
 asks schedF sched qnas = do
     io $ system "clear"
@@ -80,10 +93,10 @@ asks schedF sched qnas = do
             io . T.putStrLn $ q <> "\t\t" <> 
                 T.intercalate ":" (map (T.pack . show) [length ready, 
                 sum $ map length unseenByFile, length notReadyLastWrong])
-            aTry <- T.pack . fromMaybe "" <$> getInputLine ""
+            aTry <- T.pack . fromMaybe "" <$> myGetInputLine
             io . T.putStrLn $ T.replace "<br>" "\n" $ T.replace "   " "\n" a
             io . T.putStrLn $ if aTry == a then "Correct!" else "DIDN'T MATCH."
-            r <- fromMaybe ("" :: String) <$> getInputLine ""
+            r <- fromMaybe ("" :: String) <$> myGetInputLine
             let (correct, quit) = case r of
                   ""  -> (True , False)
                   "q" -> (True , True )
