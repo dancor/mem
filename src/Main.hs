@@ -73,7 +73,7 @@ whileM t a = t >>= \r -> if r then a >> whileM t a else return ()
 
 waitWhileKeyDown :: IO ()
 waitWhileKeyDown = do
-    threadDelay 300000
+    threadDelay 200000
     r <- hReady stdin
     when r $ whileM (hReady stdin) (getChar >> return ()) >> waitWhileKeyDown
 
