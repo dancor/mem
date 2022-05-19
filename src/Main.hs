@@ -86,15 +86,22 @@ asks schedF sched qnas = do
     t <- io getMyTime
     let (seen, unseenByFile) = seenUnseen sched qnas
         (ready, notReady) = partition ((< t) . qSched . fst) seen
-        notReadyLastWrong = filter (not . qLastSawWasCorrect . fst) notReady
+        (notReadyLastCorrect, notReadyLastWrong) = partition (qLastSawWasCorrect . fst) notReady
+        notReadyLastCorrectDueHour = filter ((< t + 3600) . qSched . fst) notReadyLastCorrect
+        notReadyLastCorrectDue2Hour = filter ((< t + 2 * 3600) . qSched . fst) notReadyLastCorrect
+        notReadyLastCorrectDue24Hour = filter ((< t + 24 * 3600) . qSched . fst) notReadyLastCorrect
         askOldest = ask . first Just . minimumBy (comparing $ qSched . fst)
         randEl l = (l !!) <$> randomRIO (0, length l - 1)
         ask (schedMb, qna@(q, a)) = do
             io . T.putStrLn $ q <> "\t\t" <> 
                 T.intercalate ":" (map (T.pack . show) [length ready, 
-                sum $ map length unseenByFile, length notReadyLastWrong])
+                sum $ map length unseenByFile, length notReadyLastWrong,
+                length notReadyLastCorrectDueHour, 
+                length notReadyLastCorrectDue2Hour,
+                length notReadyLastCorrectDue24Hour])
             aTry <- T.pack . fromMaybe "" <$> myGetInputLine
-            io . T.putStrLn $ T.replace "<br>" "\n" $ T.replace "   " "\n" a
+            io $ T.putStrLn ""
+            io . T.putStrLn $ T.replace "<br>" "\n\n" $ T.replace "   " "\n\n" a
             io . T.putStrLn $ if aTry == a then "Correct!" else "DIDN'T MATCH."
             r <- fromMaybe ("" :: String) <$> myGetInputLine
             let (correct, quit) = case r of

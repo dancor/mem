@@ -9,6 +9,7 @@ build-depends:
     base
   , bytestring
   , directory
+  , haskeline
   , process
   , random
   , serialise
