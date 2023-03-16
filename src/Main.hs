@@ -51,14 +51,19 @@ io = liftIO
 getMyTime :: IO MyTime
 getMyTime = realToFrac <$> getPOSIXTime
 
-parseQna :: Text -> Qna
-parseQna l = case T.break (== '|') l of
+parseQna :: Text -> Text -> Qna
+parseQna setName l = case T.break (== '|') l of
   (_, "") -> error $ "Could not parse question-and-answer line: " ++ show l
-  (q, sepA) -> (q, T.tail sepA)
+  (q, sepA) -> (setName <> "\0" <> q, T.tail sepA)
 
 parseQnaFile :: Text -> Qnas
-parseQnaFile = map parseQna . filter (not . ("#" `T.isPrefixOf`)) .
-    filter (not . T.null) . T.lines
+parseQnaFile c = map (parseQna setName) . filter (not . ("#" `T.isPrefixOf`)) $
+    filter (not . T.null) ls
+  where
+    (l:ls) = T.lines c
+    setPre = "# question set: "
+    setName = if setPre `T.isPrefixOf` l then T.drop (T.length setPre) l
+      else error "first line is not of form: # question set: "
 
 partitionFstMaybe :: [(Maybe a, b)] -> ([(a, b)], [b])
 partitionFstMaybe = first (map $ first fromJust) . second (map snd) .
@@ -91,9 +96,10 @@ asks schedF sched qnas = do
         notReadyLastCorrectDue2Hour = filter ((< t + 2 * 3600) . qSched . fst) notReadyLastCorrect
         notReadyLastCorrectDue24Hour = filter ((< t + 24 * 3600) . qSched . fst) notReadyLastCorrect
         askOldest = ask . first Just . minimumBy (comparing $ qSched . fst)
-        randEl l = (l !!) <$> randomRIO (0, length l - 1)
+        --randEl l = (l !!) <$> randomRIO (0, length l - 1)
+        randEl = return . head
         ask (schedMb, qna@(q, a)) = do
-            io . T.putStrLn $ q <> "\t\t" <> 
+            io . T.putStrLn $ T.dropWhile (/= '\0') q <> "\t\t" <> 
                 T.intercalate ":" (map (T.pack . show) [length ready, 
                 sum $ map length unseenByFile, length notReadyLastWrong,
                 length notReadyLastCorrectDueHour, 
