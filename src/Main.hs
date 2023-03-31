@@ -7,6 +7,7 @@ import Control.Arrow (first, second)
 import Control.Concurrent (threadDelay)
 import Control.Monad (liftM2, unless, when)
 import Control.Monad.IO.Class (liftIO)
+import Data.Char (isSpace)
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM
 import Data.List (minimumBy, partition)
@@ -57,10 +58,11 @@ parseQna setName l = case T.break (== '|') l of
   (q, sepA) -> (setName <> "\0" <> q, T.tail sepA)
 
 parseQnaFile :: Text -> Qnas
-parseQnaFile c = map (parseQna setName) . filter (not . ("#" `T.isPrefixOf`)) $
-    filter (not . T.null) ls
-  where
-    (l:ls) = T.lines c
+parseQnaFile c = map (parseQna setName) . filter (not . T.null) $ map
+  (T.dropWhileEnd isSpace . T.takeWhile (not . (== '#')) . T.dropWhile
+  isSpace) ls where
+    ls@(l0:_) = T.lines c
+    l = T.dropWhile (/= '#') l0
     setPre = "# question set: "
     setName = if setPre `T.isPrefixOf` l then T.drop (T.length setPre) l
       else error "first line is not of form: # question set: "
@@ -99,7 +101,7 @@ asks schedF sched qnas = do
         --randEl l = (l !!) <$> randomRIO (0, length l - 1)
         randEl = return . head
         ask (schedMb, qna@(q, a)) = do
-            io . T.putStrLn $ T.dropWhile (/= '\0') q <> "\t\t" <> 
+            io . T.putStrLn $ T.dropWhile (/= '\0') q <> "     " <> 
                 T.intercalate ":" (map (T.pack . show) [length ready, 
                 sum $ map length unseenByFile, length notReadyLastWrong,
                 length notReadyLastCorrectDueHour, 
