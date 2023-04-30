@@ -93,20 +93,26 @@ asks schedF sched qnas = do
     t <- io getMyTime
     let (seen, unseenByFile) = seenUnseen sched qnas
         (ready, notReady) = partition ((< t) . qSched . fst) seen
-        (notReadyLastCorrect, notReadyLastWrong) = partition (qLastSawWasCorrect . fst) notReady
-        notReadyLastCorrectDueHour = filter ((< t + 3600) . qSched . fst) notReadyLastCorrect
-        notReadyLastCorrectDue2Hour = filter ((< t + 2 * 3600) . qSched . fst) notReadyLastCorrect
-        notReadyLastCorrectDue24Hour = filter ((< t + 24 * 3600) . qSched . fst) notReadyLastCorrect
+        readyL = length ready
+        unseenL = sum $ map length unseenByFile
+        (notReadyLastCorrect, notReadyLastWrong) =
+          partition (qLastSawWasCorrect . fst) notReady
+        notReadyLastWrongL = length notReadyLastWrong
+        notReadyLastCorrectDueHourL = length $
+          filter ((< t + 3600) . qSched . fst) notReadyLastCorrect
+        notReadyLastCorrectDue2HourL = length $
+          filter ((< t + 2 * 3600) . qSched . fst) notReadyLastCorrect
+        notReadyLastCorrectDue24Hour = length $
+          filter ((< t + 24 * 3600) . qSched . fst) notReadyLastCorrect
+        mySum = 
         askOldest = ask . first Just . minimumBy (comparing $ qSched . fst)
         --randEl l = (l !!) <$> randomRIO (0, length l - 1)
         randEl = return . head
         ask (schedMb, qna@(q, a)) = do
             io . T.putStrLn $ T.dropWhile (/= '\0') q <> "     " <> 
-                T.intercalate ":" (map (T.pack . show) [length ready, 
-                sum $ map length unseenByFile, length notReadyLastWrong,
-                length notReadyLastCorrectDueHour, 
-                length notReadyLastCorrectDue2Hour,
-                length notReadyLastCorrectDue24Hour])
+                T.intercalate ":" (map (T.pack . show) [readyL, unseenL,
+                notReadyLastWrongL, notReadyLastCorrectDueHourL, 
+                notReadyLastCorrectDue2HourL, notReadyLastCorrectDue24HourL])
             aTry <- T.pack . fromMaybe "" <$> myGetInputLine
             io $ T.putStrLn ""
             io . T.putStrLn $ T.replace "<br>" "\n\n" $ T.replace "   " "\n\n" a
