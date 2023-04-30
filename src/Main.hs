@@ -102,19 +102,19 @@ asks schedF sched qnas = do
         filter ((< t + 3600) . qSched . fst) notReadyLastCorrect
       notReadyLastCorrectDue2HourL = length $
         filter ((< t + 2 * 3600) . qSched . fst) notReadyLastCorrect
-      notReadyLastCorrectDue24Hour = length $
+      notReadyLastCorrectDue24HourL = length $
         filter ((< t + 24 * 3600) . qSched . fst) notReadyLastCorrect
       mySum = readyL+unseenL+notReadyLastWrongL+notReadyLastCorrectDueHourL
       askOldest = ask . first Just . minimumBy (comparing $ qSched . fst)
       --randEl l = (l !!) <$> randomRIO (0, length l - 1)
       randEl = return . head
+      psi = T.pack . show :: Int -> Text
       ask (schedMb, qna@(q, a)) = do
         io . T.putStrLn $ T.dropWhile (/= '\0') q <> "     " <>
-          pack(show mySum)<>"r"<>pack(show readyL)<>"u"<>pack(show unseenL)<>
-          "w"<>pack(show notReadyLastWrongL)<>
-          "h"<>pack(show notReadyLastCorrectDueHourL)<>
-          "p"<>pack(show notReadyLastCorrectDue2HourL)<>
-          "d"<>pack(show notReadyLastCorrectDue24HourL)
+          psi mySum<>"#"<>psi readyL<>":"<>psi unseenL<>
+          ":"<>psi notReadyLastWrongL<>"#"<>psi notReadyLastCorrectDueHourL<>
+          ":"<>psi notReadyLastCorrectDue2HourL<>
+          ":"<>psi notReadyLastCorrectDue24HourL
         aTry <- T.pack . fromMaybe "" <$> myGetInputLine
         io $ T.putStrLn ""
         io . T.putStrLn $ T.replace "<br>" "\n\n" $ T.replace "   " "\n\n" a
