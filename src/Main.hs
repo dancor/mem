@@ -89,53 +89,53 @@ myGetInputLine = io waitWhileKeyDown >> getInputLine ""
 
 asks :: FilePath -> Sched -> [Qnas] -> InputT IO ()
 asks schedF sched qnas = do
-    io $ system "clear"
-    t <- io getMyTime
-    let (seen, unseenByFile) = seenUnseen sched qnas
-        (ready, notReady) = partition ((< t) . qSched . fst) seen
-        readyL = length ready
-        unseenL = sum $ map length unseenByFile
-        (notReadyLastCorrect, notReadyLastWrong) =
-          partition (qLastSawWasCorrect . fst) notReady
-        notReadyLastWrongL = length notReadyLastWrong
-        notReadyLastCorrectDueHourL = length $
-          filter ((< t + 3600) . qSched . fst) notReadyLastCorrect
-        notReadyLastCorrectDue2HourL = length $
-          filter ((< t + 2 * 3600) . qSched . fst) notReadyLastCorrect
-        notReadyLastCorrectDue24Hour = length $
-          filter ((< t + 24 * 3600) . qSched . fst) notReadyLastCorrect
-        mySum = readyL+unseenL+notReadyLastWrongL+notReadyLastCorrectDueHourL
-        askOldest = ask . first Just . minimumBy (comparing $ qSched . fst)
-        --randEl l = (l !!) <$> randomRIO (0, length l - 1)
-        randEl = return . head
-        ask (schedMb, qna@(q, a)) = do
-            io . T.putStrLn $ T.dropWhile (/= '\0') q <> "     " <> 
-                T.intercalate ":" (map (T.pack . show) [mySum, readyL, unseenL,
-                notReadyLastWrongL, notReadyLastCorrectDueHourL, 
-                notReadyLastCorrectDue2HourL, notReadyLastCorrectDue24HourL])
-            aTry <- T.pack . fromMaybe "" <$> myGetInputLine
-            io $ T.putStrLn ""
-            io . T.putStrLn $ T.replace "<br>" "\n\n" $ T.replace "   " "\n\n" a
-            io . T.putStrLn $ if aTry == a then "Correct!" else "DIDN'T MATCH."
-            r <- fromMaybe ("" :: String) <$> myGetInputLine
-            let (correct, quit) = case r of
-                  ""  -> (True , False)
-                  "q" -> (True , True )
-                  "Q" -> (False, True )
-                  _   -> (False, False)
-            t2 <- io $ getMyTime
-            let nextTime = case (correct, schedMb) of
-                  (False, _) -> t2 + 5 * 60
-                  (_, Just (QSched _ lastSaw True)) -> t2 + 2 * (t2 - lastSaw)
-                  _ -> t2 + 8 * 3600
-                sched2 = HM.insert q (QSched nextTime t2 correct) sched
-            io $ writeFileSerialise schedF sched2
-            unless quit $ asks schedF sched2 qnas
-    case (ready, filter (not . null) unseenByFile, notReadyLastWrong) of 
-      ([], [] , []) -> io $ T.putStrLn "Done for now!"
-      ([], [] , _ ) -> askOldest notReadyLastWrong
-      ([], u:_, _ ) -> io (randEl u) >>= ask . (,) Nothing
-      _             -> askOldest ready
+  io $ system "clear"
+  t <- io getMyTime
+  let (seen, unseenByFile) = seenUnseen sched qnas
+      (ready, notReady) = partition ((< t) . qSched . fst) seen
+      readyL = length ready
+      unseenL = sum $ map length unseenByFile
+      (notReadyLastCorrect, notReadyLastWrong) =
+        partition (qLastSawWasCorrect . fst) notReady
+      notReadyLastWrongL = length notReadyLastWrong
+      notReadyLastCorrectDueHourL = length $
+        filter ((< t + 3600) . qSched . fst) notReadyLastCorrect
+      notReadyLastCorrectDue2HourL = length $
+        filter ((< t + 2 * 3600) . qSched . fst) notReadyLastCorrect
+      notReadyLastCorrectDue24Hour = length $
+        filter ((< t + 24 * 3600) . qSched . fst) notReadyLastCorrect
+      mySum = readyL+unseenL+notReadyLastWrongL+notReadyLastCorrectDueHourL
+      askOldest = ask . first Just . minimumBy (comparing $ qSched . fst)
+      --randEl l = (l !!) <$> randomRIO (0, length l - 1)
+      randEl = return . head
+      ask (schedMb, qna@(q, a)) = do
+        io . T.putStrLn $ T.dropWhile (/= '\0') q <> "     " <>
+          pack(show mySum)<>"r"<>pack(show readyL)<>"u"<>pack(show unseenL)<>
+          "w"<>pack(show notReadyLastWrongL)<>
+          "h"<>pack(show notReadyLastCorrectDueHourL)<>
+          "p"<>pack(show notReadyLastCorrectDue2HourL)<>
+          "d"<>pack(show notReadyLastCorrectDue24HourL)
+        aTry <- T.pack . fromMaybe "" <$> myGetInputLine
+        io $ T.putStrLn ""
+        io . T.putStrLn $ T.replace "<br>" "\n\n" $ T.replace "   " "\n\n" a
+        io . T.putStrLn $ if aTry == a then "Correct!" else "DIDN'T MATCH."
+        r <- fromMaybe ("" :: String) <$> myGetInputLine
+        let (correct, quit) = case r of
+              ""  -> (True , False); "q" -> (True , True )
+              "Q" -> (False, True ); _   -> (False, False)
+        t2 <- io $ getMyTime
+        let nextTime = case (correct, schedMb) of
+              (False, _) -> t2 + 5 * 60
+              (_, Just (QSched _ lastSaw True)) -> t2 + 2 * (t2 - lastSaw)
+              _ -> t2 + 8 * 3600
+            sched2 = HM.insert q (QSched nextTime t2 correct) sched
+        io $ writeFileSerialise schedF sched2
+        unless quit $ asks schedF sched2 qnas
+  case (ready, filter (not . null) unseenByFile, notReadyLastWrong) of 
+    ([], [] , []) -> io $ T.putStrLn "Done for now!"
+    ([], [] , _ ) -> askOldest notReadyLastWrong
+    ([], u:_, _ ) -> io (randEl u) >>= ask . (,) Nothing
+    _             -> askOldest ready
 
 mainOnArgs :: [String] -> IO ()
 mainOnArgs args = case args of
