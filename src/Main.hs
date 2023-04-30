@@ -104,13 +104,13 @@ asks schedF sched qnas = do
           filter ((< t + 2 * 3600) . qSched . fst) notReadyLastCorrect
         notReadyLastCorrectDue24Hour = length $
           filter ((< t + 24 * 3600) . qSched . fst) notReadyLastCorrect
-        mySum = 
+        mySum = readyL+unseenL+notReadyLastWrongL+notReadyLastCorrectDueHourL
         askOldest = ask . first Just . minimumBy (comparing $ qSched . fst)
         --randEl l = (l !!) <$> randomRIO (0, length l - 1)
         randEl = return . head
         ask (schedMb, qna@(q, a)) = do
             io . T.putStrLn $ T.dropWhile (/= '\0') q <> "     " <> 
-                T.intercalate ":" (map (T.pack . show) [readyL, unseenL,
+                T.intercalate ":" (map (T.pack . show) [mySum, readyL, unseenL,
                 notReadyLastWrongL, notReadyLastCorrectDueHourL, 
                 notReadyLastCorrectDue2HourL, notReadyLastCorrectDue24HourL])
             aTry <- T.pack . fromMaybe "" <$> myGetInputLine
