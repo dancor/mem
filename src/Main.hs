@@ -18,6 +18,7 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import Data.Time.Clock.POSIX (getPOSIXTime)
 import GHC.Generics (Generic)
+import System.Console.ANSI (hideCursor)
 import System.Console.Haskeline (defaultSettings, getInputLine, InputT,
     runInputT)
 import System.Directory (doesFileExist)
@@ -110,7 +111,8 @@ asks schedF sched qnas = do
       randEl = return . head
       psi = T.pack . show :: Int -> Text
       ask (schedMb, qna@(q, a)) = do
-        io . T.putStrLn $ T.dropWhile (/= '\0') q <> "     " <>
+        io . T.putStrLn $ T.replace "\0" " " q <> "     " <>
+        --io . T.putStrLn $ q <> "     " <>
           psi mySum<>"#"<>psi readyL<>":"<>psi unseenL<>
           ":"<>psi notReadyLastWrongL<>"#"<>psi notReadyLastCorrectDueHourL<>
           ":"<>psi notReadyLastCorrectDue2HourL<>
@@ -149,4 +151,4 @@ mainOnArgs args = case args of
     "Args were: " ++ show args
 
 main :: IO ()
-main = getArgs >>= mainOnArgs 
+main = hideCursor >> getArgs >>= mainOnArgs 
